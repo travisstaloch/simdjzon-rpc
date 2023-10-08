@@ -1,0 +1,29 @@
+name: CI
+on:
+  push:
+  pull_request:
+  schedule:
+    - cron: '0 0 * * 1'
+
+jobs:
+  test:
+    strategy:
+      matrix:
+        optimize: [Debug, ReleaseSafe, ReleaseFast, ReleaseSmall]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          submodules: recursive
+      - uses: goto-bus-stop/setup-zig@v2.1.1
+        with:
+          version: master
+      - run: zig build test -Doptimize=${{ matrix.optimize }} --summary all
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: goto-bus-stop/setup-zig@v2.1.1
+        with:
+          version: master
+      - run: zig fmt --check .
