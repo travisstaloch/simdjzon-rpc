@@ -7,10 +7,20 @@ const dom = simdjzon.dom;
 
 const json_pointer_capacity = 256;
 
-pub const Err = struct {
-    code: i32,
+pub const Error = struct {
+    code: Code,
     note: []const u8,
-    pub fn init(code: i32, note: []const u8) Err {
+
+    pub const Code = enum(i32) {
+        parse_error = -32700,
+        invalid_request = -32600,
+        method_not_found = -32601,
+        invalid_params = -32602,
+        internal_error = -32603,
+        _, // -32000 to -32099: server_error
+    };
+
+    pub fn init(code: Code, note: []const u8) Error {
         return .{ .code = code, .note = note };
     }
 };
@@ -29,30 +39,38 @@ pub const RpcObject = struct {
         }
     }
 
-    pub fn jsonParseImpl(out: *RpcObject, doc: dom.Element) !?Err {
-        if (!doc.is(.OBJECT)) {
-            return Err.init(-32600, "The JSON sent is not a valid request object.");
-        }
+    pub fn jsonParseImpl(out: *RpcObject, doc: dom.Element) !?Error {
+        if (!doc.is(.OBJECT))
+            return Error.init(
+                .invalid_request,
+                "The JSON sent is not a valid request object.",
+            );
 
         const version = doc.at_key("jsonrpc") orelse
-            return Err.init(-32600, "Missing 'jsonrpc' field.");
+            return Error.init(.invalid_request, "Missing 'jsonrpc' field.");
 
         if (!version.is(.STRING) or !mem.eql(u8, "2.0", try version.get_string()))
-            return Err.init(-32600, "The request 'version' field must be '2.0'");
+            return Error.init(
+                .invalid_request,
+                "The request 'version' field must be '2.0'",
+            );
 
         const id = doc.at_key("id") orelse
-            return Err.init(-32600, "Missing 'id' field.");
+            return Error.init(.invalid_request, "Missing 'id' field.");
 
         const id_invalid = (id.is(.DOUBLE) and !id.is(.INT64) and !id.is(.UINT64)) or
             id.is(.OBJECT) or id.is(.ARRAY);
         if (id_invalid)
-            return Err.init(-32600, "Request 'id' must be an integer or string.");
+            return Error.init(
+                .invalid_request,
+                "Request 'id' must be an integer or string.",
+            );
 
         const method = doc.at_key("method") orelse
-            return Err.init(-32600, "Missing 'method' field.");
+            return Error.init(.invalid_request, "Missing 'method' field.");
 
         if (!method.is(.STRING))
-            return Err.init(-32600, "'method' field must be a string.");
+            return Error.init(.invalid_request, "'method' field must be a string.");
 
         const params_present_and_valid = if (doc.at_key("params")) |params|
             params.is(.ARRAY) or params.is(.OBJECT)
@@ -60,7 +78,10 @@ pub const RpcObject = struct {
             false;
 
         if (!params_present_and_valid)
-            return Err.init(-32600, "Parameters can only be passed in arrays or objects.");
+            return Error.init(
+                .invalid_request,
+                "Parameters can only be passed in arrays or objects.",
+            );
 
         if (id.is(.STRING)) {
             out.id = try id.get_string();
@@ -189,14 +210,14 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             unreachable;
         }
 
-        pub fn parseContent(self: *Self, allocator: mem.Allocator) ?Err {
+        pub fn parseContent(self: *Self, allocator: mem.Allocator) ?Error {
             self.input = self.reader.readAllAlloc(allocator, std.math.maxInt(u32)) catch
-                return Err.init(-32000, "Out of memory");
+                return Error.init(@enumFromInt(-32000), "Out of memory");
             self.parser = dom.Parser.initFixedBuffer(allocator, self.input, .{}) catch
-                return Err.init(-32000, "Out of memory");
+                return Error.init(@enumFromInt(-32000), "Out of memory");
 
             self.parser.parse() catch
-                return Err.init(-32700, "Invalid JSON was received by the server.");
+                return Error.init(.parse_error, "Invalid JSON was received by the server.");
 
             const ele = self.parser.element();
             self.elements = if (ele.is(.ARRAY))
@@ -221,21 +242,21 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             self: *Self,
             engine: *const anyopaque,
             find_and_call: *const fn (*const anyopaque, dom.Element, []const u8) bool,
-        ) !?Err {
+        ) !?Error {
             switch (self.elements) {
                 .array => {
                     var i: usize = 0;
                     while (self.elements.array.at(i)) |e| : (i += 1) {
                         _ = try self.active_request.jsonParseImpl(e);
                         if (!find_and_call(engine, e, self.active_request.method_name)) {
-                            return Err.init(-32601, "Method not found");
+                            return Error.init(.method_not_found, "Method not found");
                         }
                     }
                 },
                 .element => {
                     _ = try self.active_request.jsonParseImpl(self.elements.element);
                     if (!find_and_call(engine, self.elements.element, self.active_request.method_name)) {
-                        return Err.init(-32601, "Method not found");
+                        return Error.init(.method_not_found, "Method not found");
                     }
                 },
             }
