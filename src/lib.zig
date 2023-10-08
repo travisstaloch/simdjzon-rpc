@@ -162,6 +162,8 @@ pub const AnyParam = union(enum) {
     double: f64,
     string: []const u8,
 
+    pub const Tag = std.meta.Tag(AnyParam);
+
     pub fn init(ele: dom.Element) AnyParam {
         return if (ele.is(.BOOL))
             .{ .bool = ele.get_bool() catch unreachable }
@@ -251,28 +253,23 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             return null;
         }
 
-        pub fn getParamByName(self: *Self, name: []const u8) !AnyParam {
-            var buf: [json_pointer_capacity]u8 = undefined;
-            var fbs = std.io.fixedBufferStream(&buf);
-            const writer = fbs.writer();
-            const has_slash = name.len != 0 and name[0] == '/';
-            _ = try writer.write(if (has_slash) "/params" else "/params/");
-            _ = try writer.write(name);
-
-            return AnyParam.init(self.active_request.element.at_pointer(fbs.getWritten()));
+        pub fn getParamByName(self: *Self, name: []const u8) ?AnyParam {
+            const ele = self.parser.element();
+            const params = ele.at_key("params") orelse return null;
+            return AnyParam.init(params.at_key(name) orelse return null);
         }
 
-        pub fn getParamByIndex(self: *Self, index: usize) !AnyParam {
-            const params = self.active_request.element.at_key("params") orelse
-                return error.MissingParamsField;
-            const arr = try params.get_array();
-            return AnyParam.init(arr.at(index) orelse return error.InvalidParamIndex);
+        pub fn getParamByIndex(self: *Self, index: usize) ?AnyParam {
+            const ele = self.parser.element();
+            const params = ele.at_key("params") orelse return null;
+            const arr = params.get_array() catch return null;
+            return AnyParam.init(arr.at(index) orelse return null);
         }
 
         pub fn populateResponse(
             self: *Self,
-            engine: *const anyopaque,
-            find_and_call: *const fn (*const anyopaque, dom.Element, []const u8) bool,
+            engine: Engine,
+            find_and_call: *const fn (Engine, dom.Element, []const u8) bool,
         ) !?Error {
             switch (self.elements) {
                 .array => {
@@ -305,30 +302,72 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
 }
 
 pub fn protocolJsonRpc(
-    x: anytype,
+    base: anytype,
     reader: anytype,
     writer: anytype,
-) ProtocolJsonRpc(@TypeOf(x), @TypeOf(reader), @TypeOf(writer)) {
+) ProtocolJsonRpc(@TypeOf(base), @TypeOf(reader), @TypeOf(writer)) {
     return .{
-        .base = x,
+        .base = base,
+        .reader = reader,
+        .writer = writer,
         .elements = undefined,
         .parser = undefined,
         .active_request = undefined,
-        .reader = reader,
-        .writer = writer,
     };
 }
 
-pub const Callback = fn (doc: dom.Element, out: ?*anyopaque) void;
+test "named params" {
+    var input_fbs = std.io.fixedBufferStream(
+        \\{"jsonrpc": "2.0", "method": "add", "params": {"a": 1, "b": 2}, "id": 1}
+    );
+    var buf: [256]u8 = undefined;
+    var output_fbs = std.io.fixedBufferStream(&buf);
+
+    var rpc = protocolJsonRpc({}, input_fbs.reader(), output_fbs.writer());
+    defer rpc.deinit(talloc);
+    const merr = rpc.parseContent(talloc);
+    try testing.expect(merr == null);
+
+    const prm_a = rpc.getParamByName("a") orelse return testing.expect(false);
+    try testing.expectEqual(AnyParam.Tag.int, prm_a);
+    try testing.expectEqual(@as(i64, 1), prm_a.int);
+
+    const prm_b = rpc.getParamByName("b") orelse return testing.expect(false);
+    try testing.expectEqual(AnyParam.Tag.int, prm_b);
+    try testing.expectEqual(@as(i64, 2), prm_b.int);
+
+    try testing.expect(rpc.getParamByName("c") == null);
+}
+
+test "indexed params" {
+    var input_fbs = std.io.fixedBufferStream(
+        \\{"jsonrpc": "2.0", "method": "add", "params": [1,2], "id": 1}
+    );
+    var buf: [256]u8 = undefined;
+    var output_fbs = std.io.fixedBufferStream(&buf);
+
+    var rpc = protocolJsonRpc({}, input_fbs.reader(), output_fbs.writer());
+    defer rpc.deinit(talloc);
+    const merr = rpc.parseContent(talloc);
+    try testing.expect(merr == null);
+
+    const prm_0 = rpc.getParamByIndex(0) orelse return testing.expect(false);
+    try testing.expectEqual(AnyParam.Tag.int, prm_0);
+    try testing.expectEqual(@as(i64, 1), prm_0.int);
+
+    const prm_1 = rpc.getParamByIndex(1) orelse return testing.expect(false);
+    try testing.expectEqual(AnyParam.Tag.int, prm_1);
+    try testing.expectEqual(@as(i64, 2), prm_1.int);
+
+    try testing.expect(rpc.getParamByIndex(2) == null);
+}
+
+pub const Callback = fn (doc: dom.Element, out: *AnyParam) void;
 
 pub const NamedCallback = struct {
     name: []const u8,
-    output_buf: [16]u8 = undefined,
+    out_param: AnyParam = undefined,
     callback: *const Callback,
-
-    pub fn outputAs(nc: *const NamedCallback, comptime T: type) T {
-        return @bitCast(nc.output_buf[0..@sizeOf(T)].*);
-    }
 };
 
 pub const Engine = struct {
@@ -339,27 +378,23 @@ pub const Engine = struct {
         e.callbacks.deinit(e.allocator);
     }
 
-    fn findAndCall(_e: *const anyopaque, ele: dom.Element, name: []const u8) bool {
-        const e: *const Engine = @ptrCast(@alignCast(_e));
-        const mcb = for (e.callbacks.items) |*cb| {
+    fn findAndCall(engine: Engine, ele: dom.Element, name: []const u8) bool {
+        const mcb = for (engine.callbacks.items) |*cb| {
             if (mem.eql(u8, cb.name, name)) break cb;
         } else null;
         var named_cb = mcb orelse return false;
-        named_cb.callback(ele, &named_cb.output_buf);
+        named_cb.callback(ele, &named_cb.out_param);
         return true;
     }
 
-    fn raiseRequest(engine: *const Engine, protocol: anytype) !void {
+    fn raiseRequest(engine: Engine, protocol: anytype) !void {
         if (protocol.parseContent(engine.allocator)) |e| {
             std.log.err("{} - {s}", .{ e.code, e.note });
             return error.UserDefined;
             // TODO ucall_call_reply_error()
         }
         try protocol.startResponse();
-        const merr = try protocol.populateResponse(
-            engine,
-            findAndCall,
-        );
+        const merr = try protocol.populateResponse(engine, findAndCall);
         if (merr) |err| {
             _ = err;
             // TODO ucall_call_reply_error()
@@ -383,21 +418,20 @@ test {
     try e.callbacks.append(e.allocator, .{
         .name = "add",
         .callback = struct {
-            fn func(doc: dom.Element, _out: ?*anyopaque) void {
+            fn func(doc: dom.Element, out: *AnyParam) void {
                 const ele = doc.at_key("params") orelse unreachable;
                 var r: i64 = 0;
                 var i: usize = 0;
                 while (ele.at(i)) |param| : (i += 1) {
                     r += param.get_int64() catch @panic("param not an integer");
                 }
-                const out: *i64 = @ptrCast(@alignCast(_out));
-                out.* = r;
+                out.* = .{ .int = r };
             }
         }.func,
     });
 
     try e.raiseRequest(&rpc);
-    try testing.expectEqual(@as(u64, 6), e.callbacks.items[0].outputAs(u64));
+    try testing.expectEqual(@as(i64, 6), e.callbacks.items[0].out_param.int);
 
     std.debug.print("written={s}\n", .{output_fbs.getWritten()});
 }
