@@ -1,10 +1,10 @@
 .{
-  .name = "foo",
-  .version = "0.0.1",
-  .dependencies = .{
-    .simdjzon = .{
-      .url = "https://github.com/travisstaloch/simdjzon/archive/9d996c5133a04256d41e5d8426ae68d4fa861195.tar.gz",
-      .hash = "12206a379dceb8cac68db95346ac75ab5b221ce2ae5e43b306e8040916660f3ef7e0",
+    .name = "foo",
+    .version = "0.0.1",
+    .dependencies = .{
+        .simdjzon = .{
+            .url = "https://github.com/travisstaloch/simdjzon/archive/dffc4e3d1757b9a30829b611d92102f211e90dc6.tar.gz",
+            .hash = "12206581de8f88dfe67c833372a2e49b0331f710043ace9a386d195c6d518e83f0b3",
+        },
     },
-  },
 }
