@@ -7,6 +7,14 @@ const dom = simdjzon.dom;
 
 const json_pointer_capacity = 256;
 
+pub const Err = struct {
+    code: i32,
+    note: []const u8,
+    pub fn init(code: i32, note: []const u8) Err {
+        return .{ .code = code, .note = note };
+    }
+};
+
 pub const RpcObject = struct {
     id_buf: [json_pointer_capacity]u8 = undefined,
     id: []const u8,
@@ -15,49 +23,44 @@ pub const RpcObject = struct {
 
     pub fn jsonParse(doc: dom.Element, args: anytype) !void {
         const out = args[0];
+        if (try out.jsonParseImpl(doc)) |err| {
+            std.log.err("{} - {s}", .{ err.code, err.note });
+            return error.UserDefined;
+        }
+    }
+
+    pub fn jsonParseImpl(out: *RpcObject, doc: dom.Element) !?Err {
         if (!doc.is(.OBJECT)) {
-            std.log.err("The JSON sent is not a valid request object.", .{});
-            return error.INCORRECT_TYPE;
+            return Err.init(-32600, "The JSON sent is not a valid request object.");
         }
 
-        const version = doc.at_key("jsonrpc") orelse {
-            std.log.err("Missing 'jsonrpc' field.", .{});
-            return error.NO_SUCH_FIELD;
-        };
-        if (!version.is(.STRING) or !mem.eql(u8, "2.0", try version.get_string())) {
-            std.log.err("The request 'version' field must be '2.0'. Got '{s}", .{try version.get_string()});
-            return error.NUMBER_ERROR;
-        }
+        const version = doc.at_key("jsonrpc") orelse
+            return Err.init(-32600, "Missing 'jsonrpc' field.");
 
-        const id = doc.at_key("id") orelse {
-            std.log.err("Missing 'id' field.", .{});
-            return error.NO_SUCH_FIELD;
-        };
+        if (!version.is(.STRING) or !mem.eql(u8, "2.0", try version.get_string()))
+            return Err.init(-32600, "The request 'version' field must be '2.0'");
+
+        const id = doc.at_key("id") orelse
+            return Err.init(-32600, "Missing 'id' field.");
+
         const id_invalid = (id.is(.DOUBLE) and !id.is(.INT64) and !id.is(.UINT64)) or
             id.is(.OBJECT) or id.is(.ARRAY);
-        if (id_invalid) {
-            std.log.err("Request 'id' must be an integer or string.", .{});
-            return error.NUMBER_ERROR;
-        }
+        if (id_invalid)
+            return Err.init(-32600, "Request 'id' must be an integer or string.");
 
-        const method = doc.at_key("method") orelse {
-            std.log.err("Missing 'method' field.", .{});
-            return error.NO_SUCH_FIELD;
-        };
-        if (!method.is(.STRING)) {
-            std.log.err("'method' field must be a string.", .{});
-            return error.INCORRECT_TYPE;
-        }
+        const method = doc.at_key("method") orelse
+            return Err.init(-32600, "Missing 'method' field.");
+
+        if (!method.is(.STRING))
+            return Err.init(-32600, "'method' field must be a string.");
 
         const params_present_and_valid = if (doc.at_key("params")) |params|
             params.is(.ARRAY) or params.is(.OBJECT)
         else
             false;
 
-        if (!params_present_and_valid) {
-            std.log.err("Parameters can only be passed in arrays or objects.", .{});
-            return error.INCORRECT_TYPE;
-        }
+        if (!params_present_and_valid)
+            return Err.init(-32600, "Parameters can only be passed in arrays or objects.");
 
         if (id.is(.STRING)) {
             out.id = try id.get_string();
@@ -66,8 +69,24 @@ pub const RpcObject = struct {
         }
 
         out.method_name = try method.get_string();
+        return null;
     }
 };
+
+fn checkField(
+    comptime field_name: []const u8,
+    expected: RpcObject,
+    actual: RpcObject,
+    input: []const u8,
+) !void {
+    const ex = @field(expected, field_name);
+    const ac = @field(actual, field_name);
+    testing.expectEqualStrings(ex, ac) catch |e| {
+        std.log.err("field '{s}' expected '{s}' actual '{s}'", .{ field_name, ex, ac });
+        std.log.err("input={s}", .{input});
+        return e;
+    };
+}
 
 test RpcObject {
     // some test cases from https://www.jsonrpc.org/specification
@@ -105,25 +124,9 @@ test RpcObject {
         var actual: RpcObject = undefined;
         // std.debug.print("input={s}\n", .{input});
         try parser.element().get(&actual);
-        const merr0 = testing.expectEqualStrings(expected.id, actual.id);
-        const merr1 = testing.expectEqualStrings(expected.method_name, actual.method_name);
-        try check(merr0, input, "id", expected, actual);
-        try check(merr1, input, "method_name", expected, actual);
+        try checkField("id", expected, actual, input);
+        try checkField("method_name", expected, actual, input);
     }
-}
-
-fn check(
-    merr: error{TestExpectedEqual}!void,
-    input: []const u8,
-    comptime field_name: []const u8,
-    expected: RpcObject,
-    actual: RpcObject,
-) !void {
-    _ = merr catch |e| {
-        std.log.err("field '{s}' expected '{s}' actual '{s}'", .{ field_name, @field(expected, field_name), @field(actual, field_name) });
-        std.log.err("input={s}", .{input});
-        return e;
-    };
 }
 
 pub const Elements = union(enum) {
@@ -186,17 +189,21 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             unreachable;
         }
 
-        pub fn parseContent(self: *Self, allocator: mem.Allocator) !void {
-            self.input = try self.reader.readAllAlloc(allocator, std.math.maxInt(u32));
-            self.parser = try dom.Parser.initFixedBuffer(allocator, self.input, .{});
+        pub fn parseContent(self: *Self, allocator: mem.Allocator) ?Err {
+            self.input = self.reader.readAllAlloc(allocator, std.math.maxInt(u32)) catch
+                return Err.init(-32000, "Out of memory");
+            self.parser = dom.Parser.initFixedBuffer(allocator, self.input, .{}) catch
+                return Err.init(-32000, "Out of memory");
 
-            try self.parser.parse();
+            self.parser.parse() catch
+                return Err.init(-32700, "Invalid JSON was received by the server.");
 
             const ele = self.parser.element();
             self.elements = if (ele.is(.ARRAY))
-                .{ .array = try ele.get_array() }
+                .{ .array = ele.get_array() catch unreachable }
             else
                 .{ .element = ele };
+            return null;
         }
 
         pub fn getParam(self: *Self, name: []const u8) !AnyParam {
@@ -210,32 +217,23 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             return AnyParam.init(self.active_request.element.at_pointer(fbs.getWritten()));
         }
 
-        pub const Err = struct {
-            code: i32,
-            note: []const u8,
-            pub fn init(code: i32, note: []const u8) Err {
-                return .{ .code = code, .note = note };
-            }
-        };
-
         pub fn populateResponse(
             self: *Self,
             engine: *const anyopaque,
-            // comptime CallerAt: type,
             find_and_call: *const fn (*const anyopaque, dom.Element, []const u8) bool,
         ) !?Err {
             switch (self.elements) {
                 .array => {
                     var i: usize = 0;
                     while (self.elements.array.at(i)) |e| : (i += 1) {
-                        try e.get(&self.active_request);
+                        _ = try self.active_request.jsonParseImpl(e);
                         if (!find_and_call(engine, e, self.active_request.method_name)) {
                             return Err.init(-32601, "Method not found");
                         }
                     }
                 },
                 .element => {
-                    try self.elements.element.get(&self.active_request);
+                    _ = try self.active_request.jsonParseImpl(self.elements.element);
                     if (!find_and_call(engine, self.elements.element, self.active_request.method_name)) {
                         return Err.init(-32601, "Method not found");
                     }
@@ -246,7 +244,11 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
     };
 }
 
-pub fn protocolJsonRpc(x: anytype, reader: anytype, writer: anytype) ProtocolJsonRpc(@TypeOf(x), @TypeOf(reader), @TypeOf(writer)) {
+pub fn protocolJsonRpc(
+    x: anytype,
+    reader: anytype,
+    writer: anytype,
+) ProtocolJsonRpc(@TypeOf(x), @TypeOf(reader), @TypeOf(writer)) {
     return .{
         .base = x,
         .elements = undefined,
@@ -258,6 +260,7 @@ pub fn protocolJsonRpc(x: anytype, reader: anytype, writer: anytype) ProtocolJso
 }
 
 pub const Callback = fn (doc: dom.Element, out: ?*anyopaque) void;
+
 pub const NamedCallback = struct {
     name: []const u8,
     output_buf: [2]usize = undefined,
@@ -288,11 +291,11 @@ pub const Engine = struct {
     }
 
     fn raiseRequest(engine: *const Engine, protocol: anytype) !void {
-        protocol.parseContent(engine.allocator) catch |e| {
-            std.log.err("{s}", .{@errorName(e)});
-            return e;
+        if (protocol.parseContent(engine.allocator)) |e| {
+            std.log.err("{} - {s}", .{ e.code, e.note });
+            return error.UserDefined;
             // TODO ucall_call_reply_error()
-        };
+        }
         try protocol.startResponse();
         const merr = try protocol.populateResponse(
             engine,
@@ -322,7 +325,6 @@ test {
         .name = "add",
         .callback = struct {
             fn func(doc: dom.Element, _out: ?*anyopaque) void {
-                // const doc: *const dom.Element = @ptrCast(@alignCast(_ele));
                 const ele = doc.at_key("params") orelse unreachable;
                 var r: i64 = 0;
                 var i: usize = 0;
