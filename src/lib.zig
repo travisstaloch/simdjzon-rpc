@@ -58,9 +58,9 @@ pub const RpcObject = struct {
         const id = doc.at_key("id") orelse
             return Error.init(.invalid_request, "Missing 'id' field.");
 
-        const id_invalid = (id.is(.DOUBLE) and !id.is(.INT64) and !id.is(.UINT64)) or
-            id.is(.OBJECT) or id.is(.ARRAY);
-        if (id_invalid)
+        // TODO simplify this logic
+        if ((id.is(.DOUBLE) and !id.is(.INT64) and !id.is(.UINT64)) or
+            id.is(.OBJECT) or id.is(.ARRAY))
             return Error.init(
                 .invalid_request,
                 "Request 'id' must be an integer or string.",
@@ -162,9 +162,17 @@ pub const AnyParam = union(enum) {
     double: f64,
     string: []const u8,
 
-    pub fn init(x: void) !AnyParam {
-        _ = x;
-        unreachable;
+    pub fn init(ele: dom.Element) AnyParam {
+        return if (ele.is(.BOOL))
+            .{ .bool = ele.get_bool() catch unreachable }
+        else if (ele.is(.INT64))
+            .{ .int = ele.get_int64() catch unreachable }
+        else if (ele.is(.DOUBLE))
+            .{ .double = ele.get_double() catch unreachable }
+        else if (ele.is(.STRING))
+            .{ .string = ele.get_string() catch unreachable }
+        else
+            .null;
     }
 };
 
@@ -195,19 +203,35 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             if (self.elements == .array) try self.writer.writeByte(']');
         }
 
-        pub fn appendResponse(self: *Self, response: []const u8, writer: W) !void {
-            _ = response;
-            _ = writer;
-            _ = self;
-            unreachable;
+        pub fn appendResponse(self: *Self, response: []const u8) !void {
+            if (self.active_request.id.len == 0) return;
+            _ = try self.writer.write(
+                \\{"jsonrpc":"2.0","id":
+            );
+            _ = try self.writer.write(self.active_request.id);
+            _ = try self.writer.write(
+                \\,"result":
+            );
+            _ = try self.writer.write(response);
+            _ = try self.writer.write("},");
         }
 
-        pub fn appendError(self: *Self, error_code: []const u8, message: []const u8, writer: W) !void {
-            _ = message;
-            _ = error_code;
-            _ = writer;
-            _ = self;
-            unreachable;
+        pub fn appendError(self: *Self, error_code: []const u8, message: []const u8) !void {
+            _ = try self.writer.write(
+                \\{"jsonrpc":"2.0","id":
+            );
+            _ = try self.writer.write(self.active_request.id);
+            _ = try self.writer.write(
+                \\,"error":{"code":
+            );
+            _ = try self.writer.write(error_code);
+            _ = try self.writer.write(
+                \\,"message":"
+            );
+            _ = try self.writer.write(message);
+            _ = try self.writer.write(
+                \\"}}
+            );
         }
 
         pub fn parseContent(self: *Self, allocator: mem.Allocator) ?Error {
@@ -227,7 +251,7 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             return null;
         }
 
-        pub fn getParam(self: *Self, name: []const u8) !AnyParam {
+        pub fn getParamByName(self: *Self, name: []const u8) !AnyParam {
             var buf: [json_pointer_capacity]u8 = undefined;
             var fbs = std.io.fixedBufferStream(&buf);
             const writer = fbs.writer();
@@ -238,6 +262,13 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             return AnyParam.init(self.active_request.element.at_pointer(fbs.getWritten()));
         }
 
+        pub fn getParamByIndex(self: *Self, index: usize) !AnyParam {
+            const params = self.active_request.element.at_key("params") orelse
+                return error.MissingParamsField;
+            const arr = try params.get_array();
+            return AnyParam.init(arr.at(index) orelse return error.InvalidParamIndex);
+        }
+
         pub fn populateResponse(
             self: *Self,
             engine: *const anyopaque,
@@ -246,16 +277,24 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             switch (self.elements) {
                 .array => {
                     var i: usize = 0;
-                    while (self.elements.array.at(i)) |e| : (i += 1) {
-                        _ = try self.active_request.jsonParseImpl(e);
-                        if (!find_and_call(engine, e, self.active_request.method_name)) {
+                    while (self.elements.array.at(i)) |ele| : (i += 1) {
+                        _ = try self.active_request.jsonParseImpl(ele);
+                        if (!find_and_call(
+                            engine,
+                            ele,
+                            self.active_request.method_name,
+                        )) {
                             return Error.init(.method_not_found, "Method not found");
                         }
                     }
                 },
                 .element => {
                     _ = try self.active_request.jsonParseImpl(self.elements.element);
-                    if (!find_and_call(engine, self.elements.element, self.active_request.method_name)) {
+                    if (!find_and_call(
+                        engine,
+                        self.elements.element,
+                        self.active_request.method_name,
+                    )) {
                         return Error.init(.method_not_found, "Method not found");
                     }
                 },
@@ -284,12 +323,11 @@ pub const Callback = fn (doc: dom.Element, out: ?*anyopaque) void;
 
 pub const NamedCallback = struct {
     name: []const u8,
-    output_buf: [2]usize = undefined,
+    output_buf: [16]u8 = undefined,
     callback: *const Callback,
 
     pub fn outputAs(nc: *const NamedCallback, comptime T: type) T {
-        const t: *const T = @ptrCast(&nc.output_buf);
-        return t.*;
+        return @bitCast(nc.output_buf[0..@sizeOf(T)].*);
     }
 };
 
@@ -360,4 +398,6 @@ test {
 
     try e.raiseRequest(&rpc);
     try testing.expectEqual(@as(u64, 6), e.callbacks.items[0].outputAs(u64));
+
+    std.debug.print("written={s}\n", .{output_fbs.getWritten()});
 }
