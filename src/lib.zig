@@ -23,6 +23,12 @@ pub const Error = struct {
     pub fn init(code: Code, note: []const u8) Error {
         return .{ .code = code, .note = note };
     }
+
+    pub fn format(err: Error, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = options;
+        _ = fmt;
+        try writer.print("code={} note={s}", .{ @intFromEnum(err.code), err.note });
+    }
 };
 
 pub const RpcObject = struct {
@@ -45,7 +51,6 @@ pub const RpcObject = struct {
                 .invalid_request,
                 "The JSON sent is not a valid request object.",
             );
-
         const version = doc.at_key("jsonrpc") orelse
             return Error.init(.invalid_request, "Missing 'jsonrpc' field.");
 
@@ -57,7 +62,6 @@ pub const RpcObject = struct {
 
         const id = doc.at_key("id") orelse
             return Error.init(.invalid_request, "Missing 'id' field.");
-
         // TODO simplify this logic
         if ((id.is(.DOUBLE) and !id.is(.INT64) and !id.is(.UINT64)) or
             id.is(.OBJECT) or id.is(.ARRAY))
@@ -71,7 +75,6 @@ pub const RpcObject = struct {
 
         if (!method.is(.STRING))
             return Error.init(.invalid_request, "'method' field must be a string.");
-
         const params_present_and_valid = if (doc.at_key("params")) |params|
             params.is(.ARRAY) or params.is(.OBJECT)
         else
@@ -90,6 +93,8 @@ pub const RpcObject = struct {
         }
 
         out.method_name = try method.get_string();
+        out.element = doc;
+        // std.debug.print("method_name={s} id={s}\n", .{ out.method_name, out.id });
         return null;
     }
 };
@@ -178,16 +183,20 @@ pub const AnyParam = union(enum) {
     }
 };
 
-pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) type {
+pub const ProtocolType = enum { json_rpc };
+
+pub fn Protocol(comptime R: type, comptime W: type) type {
     return struct {
-        base: T,
-        rpc_object: RpcObject = .{ .id = &.{}, .method_name = &.{} },
-        elements: Elements,
-        reader: Reader,
-        writer: Writer,
         parser: dom.Parser,
         input: []const u8 = &.{},
-        active_request: RpcObject,
+        rpc_object: RpcObject = .{ .id = &.{}, .method_name = &.{} },
+        elements: Elements,
+        tag: ProtocolType,
+        first_response: bool = true,
+        // FIXME use AnyReader/Writer so that this type won't need to be generic
+        // keep these fields last in hope that pointer casting is safe
+        reader: Reader,
+        writer: Writer,
 
         pub const Reader = R;
         pub const Writer = W;
@@ -205,35 +214,27 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
             if (self.elements == .array) try self.writer.writeByte(']');
         }
 
-        pub fn appendResponse(self: *Self, response: []const u8) !void {
-            if (self.active_request.id.len == 0) return;
-            _ = try self.writer.write(
-                \\{"jsonrpc":"2.0","id":
+        pub fn appendResponse(
+            self: *Self,
+            comptime fmt: []const u8,
+            args: anytype,
+        ) !void {
+            if (self.rpc_object.id.len == 0) return error.MissingId;
+            if (!self.first_response) {
+                if (self.elements == .array) try self.writer.writeByte(',');
+            } else self.first_response = false;
+
+            try self.writer.print(
+                \\{{"jsonrpc":"2.0","id":{s},"result":
+                ++ fmt ++ "}}",
+                .{self.rpc_object.id} ++ args,
             );
-            _ = try self.writer.write(self.active_request.id);
-            _ = try self.writer.write(
-                \\,"result":
-            );
-            _ = try self.writer.write(response);
-            _ = try self.writer.write("},");
         }
 
-        pub fn appendError(self: *Self, error_code: []const u8, message: []const u8) !void {
-            _ = try self.writer.write(
-                \\{"jsonrpc":"2.0","id":
-            );
-            _ = try self.writer.write(self.active_request.id);
-            _ = try self.writer.write(
-                \\,"error":{"code":
-            );
-            _ = try self.writer.write(error_code);
-            _ = try self.writer.write(
-                \\,"message":"
-            );
-            _ = try self.writer.write(message);
-            _ = try self.writer.write(
-                \\"}}
-            );
+        pub fn appendError(self: *Self, err: Error) !void {
+            try self.writer.print(
+                \\{{"jsonrpc":"2.0","id":{s},"error":{{"code":{},"message":"{s}"}}}}
+            , .{ self.rpc_object.id, @intFromEnum(err.code), err.note });
         }
 
         pub fn parseContent(self: *Self, allocator: mem.Allocator) ?Error {
@@ -254,43 +255,49 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
         }
 
         pub fn getParamByName(self: *Self, name: []const u8) ?AnyParam {
-            const ele = self.parser.element();
-            const params = ele.at_key("params") orelse return null;
+            const params = self.rpc_object.element.at_key("params") orelse
+                return null;
             return AnyParam.init(params.at_key(name) orelse return null);
         }
 
         pub fn getParamByIndex(self: *Self, index: usize) ?AnyParam {
-            const ele = self.parser.element();
-            const params = ele.at_key("params") orelse return null;
+            const params = self.rpc_object.element.at_key("params") orelse
+                return null;
             const arr = params.get_array() catch return null;
             return AnyParam.init(arr.at(index) orelse return null);
         }
 
+        const FindAndCall = @TypeOf(Engine.findAndCall);
+
         pub fn populateResponse(
             self: *Self,
             engine: Engine,
-            find_and_call: *const fn (Engine, dom.Element, []const u8) bool,
+            find_and_call: *const FindAndCall,
         ) !?Error {
             switch (self.elements) {
-                .array => {
+                .array => |array| {
                     var i: usize = 0;
-                    while (self.elements.array.at(i)) |ele| : (i += 1) {
-                        _ = try self.active_request.jsonParseImpl(ele);
+                    while (array.at(i)) |ele| : (i += 1) {
+                        std.debug.assert(ele.is(.OBJECT));
+                        if (try self.rpc_object.jsonParseImpl(ele)) |err|
+                            return err;
+
                         if (!find_and_call(
                             engine,
-                            ele,
-                            self.active_request.method_name,
+                            self,
+                            self.rpc_object.method_name,
                         )) {
                             return Error.init(.method_not_found, "Method not found");
                         }
                     }
                 },
-                .element => {
-                    _ = try self.active_request.jsonParseImpl(self.elements.element);
+                .element => |element| {
+                    if (try self.rpc_object.jsonParseImpl(element)) |err|
+                        return err;
                     if (!find_and_call(
                         engine,
-                        self.elements.element,
-                        self.active_request.method_name,
+                        self,
+                        self.rpc_object.method_name,
                     )) {
                         return Error.init(.method_not_found, "Method not found");
                     }
@@ -301,18 +308,17 @@ pub fn ProtocolJsonRpc(comptime T: type, comptime R: type, comptime W: type) typ
     };
 }
 
-pub fn protocolJsonRpc(
-    base: anytype,
+pub fn protocol(
+    tag: ProtocolType,
     reader: anytype,
     writer: anytype,
-) ProtocolJsonRpc(@TypeOf(base), @TypeOf(reader), @TypeOf(writer)) {
+) Protocol(@TypeOf(reader), @TypeOf(writer)) {
     return .{
-        .base = base,
         .reader = reader,
         .writer = writer,
+        .tag = tag,
         .elements = undefined,
         .parser = undefined,
-        .active_request = undefined,
     };
 }
 
@@ -323,10 +329,11 @@ test "named params" {
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
 
-    var rpc = protocolJsonRpc({}, input_fbs.reader(), output_fbs.writer());
+    var rpc = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
     defer rpc.deinit(talloc);
     const merr = rpc.parseContent(talloc);
     try testing.expect(merr == null);
+    _ = try rpc.rpc_object.jsonParseImpl(rpc.elements.element);
 
     const prm_a = rpc.getParamByName("a") orelse return testing.expect(false);
     try testing.expectEqual(AnyParam.Tag.int, prm_a);
@@ -346,10 +353,11 @@ test "indexed params" {
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
 
-    var rpc = protocolJsonRpc({}, input_fbs.reader(), output_fbs.writer());
+    var rpc = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
     defer rpc.deinit(talloc);
     const merr = rpc.parseContent(talloc);
     try testing.expect(merr == null);
+    _ = try rpc.rpc_object.jsonParseImpl(rpc.elements.element);
 
     const prm_0 = rpc.getParamByIndex(0) orelse return testing.expect(false);
     try testing.expectEqual(AnyParam.Tag.int, prm_0);
@@ -362,12 +370,12 @@ test "indexed params" {
     try testing.expect(rpc.getParamByIndex(2) == null);
 }
 
-pub const Callback = fn (doc: dom.Element, out: *AnyParam) void;
+pub const Callback = fn (protocol_impl: *anyopaque) void;
 
 pub const NamedCallback = struct {
     name: []const u8,
-    out_param: AnyParam = undefined,
     callback: *const Callback,
+    protocol_impl: *anyopaque = undefined,
 };
 
 pub const Engine = struct {
@@ -378,60 +386,135 @@ pub const Engine = struct {
         e.callbacks.deinit(e.allocator);
     }
 
-    fn findAndCall(engine: Engine, ele: dom.Element, name: []const u8) bool {
+    fn findAndCall(engine: Engine, protocol_impl: *anyopaque, name: []const u8) bool {
         const mcb = for (engine.callbacks.items) |*cb| {
             if (mem.eql(u8, cb.name, name)) break cb;
         } else null;
         var named_cb = mcb orelse return false;
-        named_cb.callback(ele, &named_cb.out_param);
+        named_cb.callback(protocol_impl);
         return true;
     }
 
-    fn raiseRequest(engine: Engine, protocol: anytype) !void {
-        if (protocol.parseContent(engine.allocator)) |e| {
-            std.log.err("{} - {s}", .{ e.code, e.note });
-            return error.UserDefined;
-            // TODO ucall_call_reply_error()
+    fn raiseRequest(engine: Engine, protocol_impl: anytype) !void {
+        if (protocol_impl.parseContent(engine.allocator)) |err| {
+            try protocol_impl.appendError(err);
+            return;
         }
-        try protocol.startResponse();
-        const merr = try protocol.populateResponse(engine, findAndCall);
-        if (merr) |err| {
-            _ = err;
-            // TODO ucall_call_reply_error()
-            unreachable;
+        try protocol_impl.startResponse();
+        if (try protocol_impl.populateResponse(engine, findAndCall)) |err| {
+            try protocol_impl.appendError(err);
         }
-        try protocol.finishResponse();
+        try protocol_impl.finishResponse();
     }
 };
 
-test {
-    var input_fbs = std.io.fixedBufferStream(
-        \\{"jsonrpc": "2.0", "method": "add", "params": [1,2,3], "id": 1}
-    );
-    var buf: [256]u8 = undefined;
-    var output_fbs = std.io.fixedBufferStream(&buf);
+// FIXME: for now json_rpc uses this Stream type
+const Fbs = std.io.FixedBufferStream([]u8);
 
-    var rpc = protocolJsonRpc({}, input_fbs.reader(), output_fbs.writer());
-    defer rpc.deinit(talloc);
+pub fn appendResponse(
+    comptime fmt: []const u8,
+    args: anytype,
+    protocol_impl: *anyopaque,
+) !void {
+    const P = Protocol(Fbs.Reader, Fbs.Writer);
+    const p: *P = @ptrCast(@alignCast(protocol_impl));
+    switch (p.tag) {
+        .json_rpc => try p.appendResponse(fmt, args),
+    }
+}
+
+pub fn appendError(
+    err: Error,
+    protocol_impl: *anyopaque,
+) !void {
+    const P = Protocol(Fbs.Reader, Fbs.Writer);
+    const p: *P = @ptrCast(@alignCast(protocol_impl));
+    switch (p.tag) {
+        .json_rpc => try p.appendError(err),
+    }
+}
+
+pub fn getParamByIndex(index: usize, protocol_impl: *anyopaque) ?AnyParam {
+    const P = Protocol(Fbs.Reader, Fbs.Writer);
+    const p: *P = @ptrCast(@alignCast(protocol_impl));
+
+    return switch (p.tag) {
+        .json_rpc => p.getParamByIndex(index),
+    };
+}
+
+pub fn getParamByName(name: []const u8, protocol_impl: *anyopaque) ?AnyParam {
+    const P = Protocol(Fbs.Reader, Fbs.Writer);
+    const p: *P = @ptrCast(@alignCast(protocol_impl));
+
+    return switch (p.tag) {
+        .json_rpc => p.getParamByName(name),
+    };
+}
+
+test {
     var e = Engine{ .allocator = talloc };
     defer e.deinit();
+
     try e.callbacks.append(e.allocator, .{
         .name = "add",
         .callback = struct {
-            fn func(doc: dom.Element, out: *AnyParam) void {
-                const ele = doc.at_key("params") orelse unreachable;
+            fn func(protocol_impl: *anyopaque) void {
                 var r: i64 = 0;
                 var i: usize = 0;
-                while (ele.at(i)) |param| : (i += 1) {
-                    r += param.get_int64() catch @panic("param not an integer");
+                while (getParamByIndex(i, protocol_impl)) |param| : (i += 1) {
+                    r += param.int;
                 }
-                out.* = .{ .int = r };
+                appendResponse("{}", .{r}, protocol_impl) catch
+                    @panic("append response");
             }
         }.func,
     });
 
-    try e.raiseRequest(&rpc);
-    try testing.expectEqual(@as(i64, 6), e.callbacks.items[0].out_param.int);
+    try e.callbacks.append(e.allocator, .{
+        .name = "add_named",
+        .callback = struct {
+            fn func(protocol_impl: *anyopaque) void {
+                var r: i64 = 0;
+                const prm_a = getParamByName("a", protocol_impl) orelse unreachable;
+                const prm_b = getParamByName("b", protocol_impl) orelse unreachable;
+                r += prm_a.int;
+                r += prm_b.int;
+                appendResponse("{}", .{r}, protocol_impl) catch
+                    @panic("append response");
+            }
+        }.func,
+    });
 
-    std.debug.print("written={s}\n", .{output_fbs.getWritten()});
+    const input_expecteds = [_][2][]const u8{
+        .{
+            \\{"jsonrpc": "2.0", "method": "add", "params": [1,2,4], "id": 1}
+            ,
+            \\{"jsonrpc":"2.0","id":1,"result":7}
+        },
+        .{
+            \\{"jsonrpc": "2.0", "method": "add_named", "params": {"a": 1, "b": 2}, "id": 2}
+            ,
+            \\{"jsonrpc":"2.0","id":2,"result":3}
+        },
+        .{
+            \\[{"jsonrpc": "2.0", "method": "add", "params": [1,2,4],  "id": 1},
+            \\ {"jsonrpc": "2.0", "method": "add", "params": [1,2,10], "id": 2}]
+            ,
+            \\[{"jsonrpc":"2.0","id":1,"result":7},{"jsonrpc":"2.0","id":2,"result":13}]
+        },
+    };
+
+    for (input_expecteds) |ie| {
+        const input, const expected = ie;
+        var input_fbs = std.io.fixedBufferStream(input);
+        var buf: [256]u8 = undefined;
+        var output_fbs = std.io.fixedBufferStream(&buf);
+
+        var rpc = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
+        defer rpc.deinit(talloc);
+        try e.raiseRequest(&rpc);
+
+        try testing.expectEqualStrings(expected, output_fbs.getWritten());
+    }
 }
