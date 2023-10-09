@@ -5,8 +5,6 @@ const mem = std.mem;
 const simdjzon = @import("simdjzon");
 const dom = simdjzon.dom;
 
-const json_pointer_capacity = 256;
-
 pub const Error = struct {
     code: Code,
     note: []const u8,
@@ -32,7 +30,7 @@ pub const Error = struct {
 };
 
 pub const RpcObject = struct {
-    id_buf: [json_pointer_capacity]u8 = undefined,
+    id_buf: [25]u8 = undefined,
     id: []const u8,
     method_name: []const u8,
     element: dom.Element = undefined,
@@ -329,21 +327,21 @@ test "named params" {
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
 
-    var rpc = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
-    defer rpc.deinit(talloc);
-    const merr = rpc.parseContent(talloc);
+    var impl = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
+    defer impl.deinit(talloc);
+    const merr = impl.parseContent(talloc);
     try testing.expect(merr == null);
-    _ = try rpc.rpc_object.jsonParseImpl(rpc.elements.element);
+    _ = try impl.rpc_object.jsonParseImpl(impl.elements.element);
 
-    const prm_a = rpc.getParamByName("a") orelse return testing.expect(false);
+    const prm_a = impl.getParamByName("a") orelse return testing.expect(false);
     try testing.expectEqual(AnyParam.Tag.int, prm_a);
     try testing.expectEqual(@as(i64, 1), prm_a.int);
 
-    const prm_b = rpc.getParamByName("b") orelse return testing.expect(false);
+    const prm_b = impl.getParamByName("b") orelse return testing.expect(false);
     try testing.expectEqual(AnyParam.Tag.int, prm_b);
     try testing.expectEqual(@as(i64, 2), prm_b.int);
 
-    try testing.expect(rpc.getParamByName("c") == null);
+    try testing.expect(impl.getParamByName("c") == null);
 }
 
 test "indexed params" {
@@ -353,21 +351,21 @@ test "indexed params" {
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
 
-    var rpc = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
-    defer rpc.deinit(talloc);
-    const merr = rpc.parseContent(talloc);
+    var impl = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
+    defer impl.deinit(talloc);
+    const merr = impl.parseContent(talloc);
     try testing.expect(merr == null);
-    _ = try rpc.rpc_object.jsonParseImpl(rpc.elements.element);
+    _ = try impl.rpc_object.jsonParseImpl(impl.elements.element);
 
-    const prm_0 = rpc.getParamByIndex(0) orelse return testing.expect(false);
+    const prm_0 = impl.getParamByIndex(0) orelse return testing.expect(false);
     try testing.expectEqual(AnyParam.Tag.int, prm_0);
     try testing.expectEqual(@as(i64, 1), prm_0.int);
 
-    const prm_1 = rpc.getParamByIndex(1) orelse return testing.expect(false);
+    const prm_1 = impl.getParamByIndex(1) orelse return testing.expect(false);
     try testing.expectEqual(AnyParam.Tag.int, prm_1);
     try testing.expectEqual(@as(i64, 2), prm_1.int);
 
-    try testing.expect(rpc.getParamByIndex(2) == null);
+    try testing.expect(impl.getParamByIndex(2) == null);
 }
 
 pub const Callback = fn (protocol_impl: *anyopaque) void;
@@ -475,12 +473,9 @@ test {
         .name = "add_named",
         .callback = struct {
             fn func(protocol_impl: *anyopaque) void {
-                var r: i64 = 0;
-                const prm_a = getParamByName("a", protocol_impl) orelse unreachable;
-                const prm_b = getParamByName("b", protocol_impl) orelse unreachable;
-                r += prm_a.int;
-                r += prm_b.int;
-                appendResponse("{}", .{r}, protocol_impl) catch
+                const a = getParamByName("a", protocol_impl) orelse unreachable;
+                const b = getParamByName("b", protocol_impl) orelse unreachable;
+                appendResponse("{}", .{a.int + b.int}, protocol_impl) catch
                     @panic("append response");
             }
         }.func,
@@ -511,9 +506,9 @@ test {
         var buf: [256]u8 = undefined;
         var output_fbs = std.io.fixedBufferStream(&buf);
 
-        var rpc = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
-        defer rpc.deinit(talloc);
-        try e.raiseRequest(&rpc);
+        var impl = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
+        defer impl.deinit(talloc);
+        try e.raiseRequest(&impl);
 
         try testing.expectEqualStrings(expected, output_fbs.getWritten());
     }
