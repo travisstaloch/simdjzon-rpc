@@ -401,18 +401,19 @@ pub const NamedCallback = struct {
 };
 
 pub const Engine = struct {
-    callbacks: std.ArrayListUnmanaged(NamedCallback) = .{},
+    callbacks: std.StringHashMapUnmanaged(NamedCallback) = .{},
     allocator: mem.Allocator,
 
     fn deinit(e: *Engine) void {
         e.callbacks.deinit(e.allocator);
     }
 
+    pub fn putCallback(e: *Engine, named_callback: NamedCallback) !void {
+        try e.callbacks.put(e.allocator, named_callback.name, named_callback);
+    }
+
     fn findAndCall(engine: Engine, protocol_impl: *anyopaque, name: []const u8) bool {
-        const mcb = for (engine.callbacks.items) |*cb| {
-            if (mem.eql(u8, cb.name, name)) break cb;
-        } else null;
-        var named_cb = mcb orelse return false;
+        const named_cb = engine.callbacks.get(name) orelse return false;
         named_cb.callback(protocol_impl);
         return true;
     }
@@ -477,7 +478,7 @@ test {
     var e = Engine{ .allocator = talloc };
     defer e.deinit();
 
-    try e.callbacks.append(e.allocator, .{
+    try e.putCallback(.{
         .name = "sum",
         .callback = struct {
             fn func(protocol_impl: *anyopaque) void {
@@ -492,7 +493,7 @@ test {
         }.func,
     });
 
-    try e.callbacks.append(e.allocator, .{
+    try e.putCallback(.{
         .name = "sum_named",
         .callback = struct {
             fn func(protocol_impl: *anyopaque) void {
@@ -504,7 +505,7 @@ test {
         }.func,
     });
 
-    try e.callbacks.append(e.allocator, .{
+    try e.putCallback(.{
         .name = "subtract",
         .callback = struct {
             fn func(protocol_impl: *anyopaque) void {
@@ -516,7 +517,7 @@ test {
         }.func,
     });
 
-    try e.callbacks.append(e.allocator, .{
+    try e.putCallback(.{
         .name = "get_data",
         .callback = struct {
             fn func(protocol_impl: *anyopaque) void {
