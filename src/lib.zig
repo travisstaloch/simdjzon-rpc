@@ -35,6 +35,8 @@ pub const RpcInfo = struct {
     method_name: []const u8,
     element: dom.Element = undefined,
 
+    pub const empty = RpcInfo{ .id = "", .method_name = "" };
+
     // custom json parsing method
     pub fn jsonParse(doc: dom.Element, args: anytype) !void {
         const out = args[0];
@@ -188,7 +190,7 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
     return struct {
         parser: dom.Parser,
         input: []const u8 = &.{},
-        rpc_info: RpcInfo = .{ .id = &.{}, .method_name = &.{} },
+        rpc_info: RpcInfo = RpcInfo.empty,
         elements: Elements,
         tag: ProtocolType,
         first_response: bool = true,
@@ -228,18 +230,25 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
             try self.writeComma();
 
             try self.writer.print(
-                \\{{"jsonrpc":"2.0","id":{s},"result":
-                ++ fmt ++ "}}",
-                .{self.rpc_info.id} ++ args,
+                \\{{"jsonrpc":"2.0","result":
+                ++ fmt ++
+                    \\,"id":"{s}"}}
+            ,
+                args ++ .{self.rpc_info.id},
             );
         }
 
         pub fn appendError(self: *Self, err: Error) !void {
-            const id = if (self.rpc_info.id.len != 0) self.rpc_info.id else "null";
+            // const id = if (self.rpc_info.id.len != 0) self.rpc_info.id else "null";
             try self.writeComma();
-            try self.writer.print(
-                \\{{"jsonrpc":"2.0","id":{s},"error":{{"code":{},"message":"{s}"}}}}
-            , .{ id, @intFromEnum(err.code), err.note });
+            if (self.rpc_info.id.len == 0)
+                try self.writer.print(
+                    \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":null}}
+                , .{ @intFromEnum(err.code), err.note })
+            else
+                try self.writer.print(
+                    \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":"{s}"}}
+                , .{ @intFromEnum(err.code), err.note, self.rpc_info.id });
         }
 
         pub fn parse(self: *Self, allocator: mem.Allocator) ?Error {
@@ -287,22 +296,25 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
                             try self.appendError(Error.init(.invalid_request, "Invalid request. Not an object."));
                             continue;
                         }
-
-                        if (try self.rpc_info.jsonParseImpl(ele)) |err|
-                            return err;
+                        self.rpc_info = RpcInfo.empty;
+                        if (try self.rpc_info.jsonParseImpl(ele)) |err| {
+                            try self.appendError(err);
+                            continue;
+                        }
 
                         if (!find_and_call(
                             engine,
                             self,
                             self.rpc_info.method_name,
                         )) {
-                            return Error.init(.method_not_found, "Method not found");
+                            try self.appendError(Error.init(.method_not_found, "Method not found"));
                         }
                     }
                     if (i == 0)
                         return Error.init(.invalid_request, "Invalid request. Empty array.");
                 },
                 .element => |element| {
+                    self.rpc_info = RpcInfo.empty;
                     if (try self.rpc_info.jsonParseImpl(element)) |err|
                         return err;
                     if (!find_and_call(
@@ -335,7 +347,7 @@ pub fn protocol(
 
 test "named params" {
     var input_fbs = std.io.fixedBufferStream(
-        \\{"jsonrpc": "2.0", "method": "add", "params": {"a": 1, "b": 2}, "id": 1}
+        \\{"jsonrpc": "2.0", "method": "sum", "params": {"a": 1, "b": 2}, "id": 1}
     );
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
@@ -359,7 +371,7 @@ test "named params" {
 
 test "indexed params" {
     var input_fbs = std.io.fixedBufferStream(
-        \\{"jsonrpc": "2.0", "method": "add", "params": [1,2], "id": 1}
+        \\{"jsonrpc": "2.0", "method": "sum", "params": [1,2], "id": 1}
     );
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
@@ -467,7 +479,7 @@ test {
     defer e.deinit();
 
     try e.callbacks.append(e.allocator, .{
-        .name = "add",
+        .name = "sum",
         .callback = struct {
             fn func(protocol_impl: *anyopaque) void {
                 var r: i64 = 0;
@@ -482,7 +494,7 @@ test {
     });
 
     try e.callbacks.append(e.allocator, .{
-        .name = "add_named",
+        .name = "sum_named",
         .callback = struct {
             fn func(protocol_impl: *anyopaque) void {
                 const a = getParamByName("a", protocol_impl) orelse unreachable;
@@ -493,16 +505,41 @@ test {
         }.func,
     });
 
+    try e.callbacks.append(e.allocator, .{
+        .name = "subtract",
+        .callback = struct {
+            fn func(protocol_impl: *anyopaque) void {
+                const a = getParamByIndex(0, protocol_impl) orelse unreachable;
+                const b = getParamByIndex(1, protocol_impl) orelse unreachable;
+                appendResult("{}", .{a.int - b.int}, protocol_impl) catch
+                    @panic("append response");
+            }
+        }.func,
+    });
+
+    try e.callbacks.append(e.allocator, .{
+        .name = "get_data",
+        .callback = struct {
+            fn func(protocol_impl: *anyopaque) void {
+                appendResult(
+                    \\["hello",5]
+                , .{}, protocol_impl) catch
+                    @panic("append response");
+            }
+        }.func,
+    });
+
+    // from https://www.jsonrpc.org/specification#examples
     const input_expecteds = [_][2][]const u8{
         .{ // rpc call with positional parameters
-            \\{"jsonrpc": "2.0", "method": "add", "params": [1,2,4], "id": 1}
+            \\{"jsonrpc": "2.0", "method": "sum", "params": [1,2,4], "id": 1}
             ,
-            \\{"jsonrpc":"2.0","id":1,"result":7}
+            \\{"jsonrpc":"2.0","result":7,"id":"1"}
         },
         .{ // rpc call with named parameters
-            \\{"jsonrpc": "2.0", "method": "add_named", "params": {"a": 1, "b": 2}, "id": 2}
+            \\{"jsonrpc": "2.0", "method": "sum_named", "params": {"a": 1, "b": 2}, "id": 2}
             ,
-            \\{"jsonrpc":"2.0","id":2,"result":3}
+            \\{"jsonrpc":"2.0","result":3,"id":"2"}
         },
         // TODO
         // .{ // notifications
@@ -516,25 +553,25 @@ test {
         //     "",
         // },
         .{ // valid rpc call Batch
-            \\[{"jsonrpc": "2.0", "method": "add", "params": [1,2,4],  "id": 1},
-            \\ {"jsonrpc": "2.0", "method": "add", "params": [1,2,10], "id": 2}]
+            \\[{"jsonrpc": "2.0", "method": "sum", "params": [1,2,4],  "id": 1},
+            \\ {"jsonrpc": "2.0", "method": "sum", "params": [1,2,10], "id": 2}]
             ,
-            \\[{"jsonrpc":"2.0","id":1,"result":7},{"jsonrpc":"2.0","id":2,"result":13}]
+            \\[{"jsonrpc":"2.0","result":7,"id":"1"},{"jsonrpc":"2.0","result":13,"id":"2"}]
         },
         .{ // rpc call of non-existent method
             \\{"jsonrpc": "2.0", "method": "foobar", "id": "1"}
             ,
-            \\{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}
+            \\{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":"1"}
         },
         .{ // rpc call with invalid JSON
             \\{"jsonrpc": "2.0", "method": "foobar, "params": "bar", "baz]
             ,
-            \\{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server."}}
+            \\{"jsonrpc":"2.0","error":{"code":-32700,"message":"Invalid JSON was received by the server."},"id":null}
         },
         .{ // rpc call with invalid Request object
             \\{"jsonrpc": "2.0", "method": 1, "params": "bar"}
             ,
-            \\{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Missing 'id' field."}}
+            \\{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. Missing 'id' field."},"id":null}
         },
         .{ // rpc call Batch, invalid JSON
             \\[
@@ -542,23 +579,45 @@ test {
             \\  {"jsonrpc": "2.0", "method"
             \\]
             ,
-            \\{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server."}}
+            \\{"jsonrpc":"2.0","error":{"code":-32700,"message":"Invalid JSON was received by the server."},"id":null}
         },
         .{ // rpc call with an empty Array
             \\[]
             ,
-            \\[{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Empty array."}}]
+            \\[{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. Empty array."},"id":null}]
         },
         .{ // rpc call with an invalid Batch (but not empty)
             \\[1]
             ,
-            \\[{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Not an object."}}]
+            \\[{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. Not an object."},"id":null}]
         },
         .{ // rpc call with invalid Batch
             \\[1,2,3]
             ,
-            \\[{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Not an object."}},{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Not an object."}},{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Not an object."}}]
+            \\[{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. Not an object."},"id":null},{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. Not an object."},"id":null},{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. Not an object."},"id":null}]
         },
+        .{ // rpc call Batch
+            \\[
+            \\    {"jsonrpc": "2.0", "method": "sum", "params": [1,2,4], "id": "1"},
+            // TODO notifications
+            // \\    {"jsonrpc": "2.0", "method": "notify_hello", "params": [7]},
+            \\    {"jsonrpc": "2.0", "method": "subtract", "params": [42,23], "id": "2"},
+            \\    {"foo": "boo"},
+            \\    {"jsonrpc": "2.0", "method": "foo.get", "params": {"name": "myself"}, "id": "5"},
+            \\    {"jsonrpc": "2.0", "method": "get_data", "id": "9"} 
+            \\]
+            ,
+            \\[{"jsonrpc":"2.0","result":7,"id":"1"},{"jsonrpc":"2.0","result":19,"id":"2"},{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. Missing 'jsonrpc' field."},"id":null},{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":"5"},{"jsonrpc":"2.0","result":["hello",5],"id":"9"}]
+        },
+        // TODO
+        // .{ // rpc call Batch (all notifications)
+        //     \\[
+        //     \\    {"jsonrpc": "2.0", "method": "notify_sum", "params": [1,2,4]},
+        //     \\    {"jsonrpc": "2.0", "method": "notify_hello", "params": [7]}
+        //     \\]
+        //     ,
+        //     "",
+        // },
     };
 
     for (input_expecteds) |ie| {
