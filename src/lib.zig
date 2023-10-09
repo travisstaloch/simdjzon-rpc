@@ -58,7 +58,7 @@ pub const RpcInfo = struct {
         if (!version.is(.STRING) or !mem.eql(u8, "2.0", try version.get_string()))
             return Error.init(
                 .invalid_request,
-                "The request 'version' field must be '2.0'",
+                "Invalid request. 'version' field must equal '2.0'",
             );
 
         if (doc.at_key("id")) |id| {
@@ -69,7 +69,7 @@ pub const RpcInfo = struct {
             } else {
                 return Error.init(
                     .invalid_request,
-                    "Request 'id' must be an integer or string.",
+                    "Invalid request. 'id' must be an integer or string.",
                 );
             }
         } else out.id = "";
@@ -79,15 +79,15 @@ pub const RpcInfo = struct {
 
         if (!method.is(.STRING))
             return Error.init(.invalid_request, "Invalid request. 'method' field must be a string.");
-        const params_present_and_valid = if (doc.at_key("params")) |params|
+        const params_ok = if (doc.at_key("params")) |params|
             params.is(.ARRAY) or params.is(.OBJECT)
         else
             true;
 
-        if (!params_present_and_valid)
+        if (!params_ok)
             return Error.init(
                 .invalid_request,
-                "Invalid Request. Parameters can only be passed in arrays or objects.",
+                "Invalid Request. 'params' field must be an array or object.",
             );
 
         out.method_name = try method.get_string();
@@ -218,7 +218,7 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
             } else self.first_response = false;
         }
 
-        pub fn appendResult(
+        pub fn writeResult(
             self: *Self,
             comptime fmt: []const u8,
             args: anytype,
@@ -235,7 +235,7 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
             );
         }
 
-        pub fn appendError(self: *Self, err: Error) !void {
+        pub fn writeError(self: *Self, err: Error) !void {
             // const id = if (self.rpc_info.id.len != 0) self.rpc_info.id else "null";
             try self.writeComma();
             if (self.rpc_info.id.len == 0)
@@ -290,12 +290,12 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
                     var i: usize = 0;
                     while (array.at(i)) |ele| : (i += 1) {
                         if (!ele.is(.OBJECT)) {
-                            try self.appendError(Error.init(.invalid_request, "Invalid request. Not an object."));
+                            try self.writeError(Error.init(.invalid_request, "Invalid request. Not an object."));
                             continue;
                         }
                         self.rpc_info = RpcInfo.empty;
                         if (try self.rpc_info.jsonParseImpl(ele)) |err| {
-                            try self.appendError(err);
+                            try self.writeError(err);
                             continue;
                         }
 
@@ -305,7 +305,7 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
                             self.rpc_info.method_name,
                         )) {
                             if (self.rpc_info.id.len != 0)
-                                try self.appendError(Error.init(.method_not_found, "Method not found"));
+                                try self.writeError(Error.init(.method_not_found, "Method not found"));
                         }
                     }
                     if (i == 0)
@@ -419,12 +419,12 @@ pub const Engine = struct {
 
     fn parseAndRespond(engine: Engine, protocol_impl: anytype) !void {
         if (protocol_impl.parse(engine.allocator)) |err| {
-            try protocol_impl.appendError(err);
+            try protocol_impl.writeError(err);
             return;
         }
         try protocol_impl.startResponse();
         if (try protocol_impl.respond(engine, findAndCall)) |err|
-            try protocol_impl.appendError(err);
+            try protocol_impl.writeError(err);
         try protocol_impl.finishResponse();
     }
 };
@@ -432,7 +432,7 @@ pub const Engine = struct {
 // FIXME: for now json_rpc uses this Stream type
 const Fbs = std.io.FixedBufferStream([]u8);
 
-pub fn appendResult(
+pub fn writeResult(
     comptime fmt: []const u8,
     args: anytype,
     protocol_impl: *anyopaque,
@@ -440,18 +440,18 @@ pub fn appendResult(
     const P = Protocol(Fbs.Reader, Fbs.Writer);
     const p: *P = @ptrCast(@alignCast(protocol_impl));
     switch (p.tag) {
-        .json_rpc => try p.appendResult(fmt, args),
+        .json_rpc => try p.writeResult(fmt, args),
     }
 }
 
-pub fn appendError(
+pub fn writeError(
     err: Error,
     protocol_impl: *anyopaque,
 ) !void {
     const P = Protocol(Fbs.Reader, Fbs.Writer);
     const p: *P = @ptrCast(@alignCast(protocol_impl));
     switch (p.tag) {
-        .json_rpc => try p.appendError(err),
+        .json_rpc => try p.writeError(err),
     }
 }
 
@@ -486,8 +486,8 @@ test {
                 while (getParamByIndex(i, protocol_impl)) |param| : (i += 1) {
                     r += param.int;
                 }
-                appendResult("{}", .{r}, protocol_impl) catch
-                    @panic("append response");
+                writeResult("{}", .{r}, protocol_impl) catch
+                    @panic("write failed");
             }
         }.func,
     });
@@ -498,8 +498,8 @@ test {
             fn func(protocol_impl: *anyopaque) void {
                 const a = getParamByName("a", protocol_impl) orelse unreachable;
                 const b = getParamByName("b", protocol_impl) orelse unreachable;
-                appendResult("{}", .{a.int + b.int}, protocol_impl) catch
-                    @panic("append response");
+                writeResult("{}", .{a.int + b.int}, protocol_impl) catch
+                    @panic("write failed");
             }
         }.func,
     });
@@ -510,8 +510,8 @@ test {
             fn func(protocol_impl: *anyopaque) void {
                 const a = getParamByIndex(0, protocol_impl) orelse unreachable;
                 const b = getParamByIndex(1, protocol_impl) orelse unreachable;
-                appendResult("{}", .{a.int - b.int}, protocol_impl) catch
-                    @panic("append response");
+                writeResult("{}", .{a.int - b.int}, protocol_impl) catch
+                    @panic("write failed");
             }
         }.func,
     });
@@ -520,10 +520,10 @@ test {
         .name = "get_data",
         .callback = struct {
             fn func(protocol_impl: *anyopaque) void {
-                appendResult(
+                writeResult(
                     \\["hello",5]
                 , .{}, protocol_impl) catch
-                    @panic("append response");
+                    @panic("write failed");
             }
         }.func,
     });
