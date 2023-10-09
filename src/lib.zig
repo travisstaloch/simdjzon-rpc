@@ -278,7 +278,9 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
                 .array => |array| {
                     var i: usize = 0;
                     while (array.at(i)) |ele| : (i += 1) {
-                        std.debug.assert(ele.is(.OBJECT));
+                        if (!ele.is(.OBJECT))
+                            return Error.init(.invalid_request, "Invalid request. Not an object.");
+
                         if (try self.rpc_info.jsonParseImpl(ele)) |err|
                             return err;
 
@@ -290,6 +292,8 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
                             return Error.init(.method_not_found, "Method not found");
                         }
                     }
+                    if (i == 0)
+                        return Error.init(.invalid_request, "Invalid request. Empty array.");
                 },
                 .element => |element| {
                     if (try self.rpc_info.jsonParseImpl(element)) |err|
@@ -532,6 +536,16 @@ test {
             \\]
             ,
             \\{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server."}}
+        },
+        .{ // rpc call with an empty Array
+            \\[]
+            ,
+            \\[{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Empty array."}}]
+        },
+        .{ // rpc call with an invalid Batch (but not empty)
+            \\[1]
+            ,
+            \\[{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Not an object."}}]
         },
     };
 
