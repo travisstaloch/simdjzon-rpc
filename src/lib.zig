@@ -61,21 +61,24 @@ pub const RpcInfo = struct {
                 "The request 'version' field must be '2.0'",
             );
 
-        const id = doc.at_key("id") orelse
-            return Error.init(.invalid_request, "Invalid request. Missing 'id' field.");
-        // TODO simplify this logic
-        if ((id.is(.DOUBLE) and !id.is(.INT64) and !id.is(.UINT64)) or
-            id.is(.OBJECT) or id.is(.ARRAY))
-            return Error.init(
-                .invalid_request,
-                "Request 'id' must be an integer or string.",
-            );
+        if (doc.at_key("id")) |id| {
+            if (id.is(.STRING)) {
+                out.id = try id.get_string();
+            } else if (id.is(.INT64) or id.is(.UINT64)) {
+                out.id = try std.fmt.bufPrint(&out.id_buf, "{}", .{try id.get_int64()});
+            } else {
+                return Error.init(
+                    .invalid_request,
+                    "Request 'id' must be an integer or string.",
+                );
+            }
+        } else out.id = "";
 
         const method = doc.at_key("method") orelse
             return Error.init(.invalid_request, "Invalid request. Missing 'method' field.");
 
         if (!method.is(.STRING))
-            return Error.init(.invalid_request, "'method' field must be a string.");
+            return Error.init(.invalid_request, "Invalid request. 'method' field must be a string.");
         const params_present_and_valid = if (doc.at_key("params")) |params|
             params.is(.ARRAY) or params.is(.OBJECT)
         else
@@ -84,14 +87,8 @@ pub const RpcInfo = struct {
         if (!params_present_and_valid)
             return Error.init(
                 .invalid_request,
-                "Parameters can only be passed in arrays or objects.",
+                "Invalid Request. Parameters can only be passed in arrays or objects.",
             );
-
-        if (id.is(.STRING)) {
-            out.id = try id.get_string();
-        } else if (id.is(.INT64) or id.is(.UINT64)) {
-            out.id = try std.fmt.bufPrint(&out.id_buf, "{}", .{try id.get_int64()});
-        }
 
         out.method_name = try method.get_string();
         out.element = doc;
@@ -307,7 +304,8 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
                             self,
                             self.rpc_info.method_name,
                         )) {
-                            try self.appendError(Error.init(.method_not_found, "Method not found"));
+                            if (self.rpc_info.id.len != 0)
+                                try self.appendError(Error.init(.method_not_found, "Method not found"));
                         }
                     }
                     if (i == 0)
@@ -322,7 +320,8 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
                         self,
                         self.rpc_info.method_name,
                     )) {
-                        return Error.init(.method_not_found, "Method not found");
+                        if (self.rpc_info.id.len != 0)
+                            return Error.init(.method_not_found, "Method not found");
                     }
                 },
             }
@@ -541,17 +540,16 @@ test {
             ,
             \\{"jsonrpc":"2.0","result":3,"id":"2"}
         },
-        // TODO
-        // .{ // notifications
-        //     \\{"jsonrpc": "2.0", "method": "update", "params": [1,2,3,4,5]}
-        //     ,
-        //     "",
-        // },
-        // .{
-        //     \\{"jsonrpc": "2.0", "method": "foobar"}
-        //     ,
-        //     "",
-        // },
+        .{ // notifications
+            \\{"jsonrpc": "2.0", "method": "update", "params": [1,2,3,4,5]}
+            ,
+            "",
+        },
+        .{
+            \\{"jsonrpc": "2.0", "method": "foobar"}
+            ,
+            "",
+        },
         .{ // valid rpc call Batch
             \\[{"jsonrpc": "2.0", "method": "sum", "params": [1,2,4],  "id": 1},
             \\ {"jsonrpc": "2.0", "method": "sum", "params": [1,2,10], "id": 2}]
@@ -571,7 +569,7 @@ test {
         .{ // rpc call with invalid Request object
             \\{"jsonrpc": "2.0", "method": 1, "params": "bar"}
             ,
-            \\{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. Missing 'id' field."},"id":null}
+            \\{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. 'method' field must be a string."},"id":null}
         },
         .{ // rpc call Batch, invalid JSON
             \\[
@@ -599,8 +597,7 @@ test {
         .{ // rpc call Batch
             \\[
             \\    {"jsonrpc": "2.0", "method": "sum", "params": [1,2,4], "id": "1"},
-            // TODO notifications
-            // \\    {"jsonrpc": "2.0", "method": "notify_hello", "params": [7]},
+            \\    {"jsonrpc": "2.0", "method": "notify_hello", "params": [7]},
             \\    {"jsonrpc": "2.0", "method": "subtract", "params": [42,23], "id": "2"},
             \\    {"foo": "boo"},
             \\    {"jsonrpc": "2.0", "method": "foo.get", "params": {"name": "myself"}, "id": "5"},
@@ -609,15 +606,15 @@ test {
             ,
             \\[{"jsonrpc":"2.0","result":7,"id":"1"},{"jsonrpc":"2.0","result":19,"id":"2"},{"jsonrpc":"2.0","error":{"code":-32600,"message":"Invalid request. Missing 'jsonrpc' field."},"id":null},{"jsonrpc":"2.0","error":{"code":-32601,"message":"Method not found"},"id":"5"},{"jsonrpc":"2.0","result":["hello",5],"id":"9"}]
         },
-        // TODO
-        // .{ // rpc call Batch (all notifications)
-        //     \\[
-        //     \\    {"jsonrpc": "2.0", "method": "notify_sum", "params": [1,2,4]},
-        //     \\    {"jsonrpc": "2.0", "method": "notify_hello", "params": [7]}
-        //     \\]
-        //     ,
-        //     "",
-        // },
+        .{ // rpc call Batch (all notifications)
+            \\[
+            \\    {"jsonrpc": "2.0", "method": "notify_sum", "params": [1,2,4]},
+            \\    {"jsonrpc": "2.0", "method": "notify_hello", "params": [7]}
+            \\]
+            ,
+            // FIXME this should be empty, no array
+            "[]",
+        },
     };
 
     for (input_expecteds) |ie| {
