@@ -213,15 +213,19 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
             if (self.elements == .array) try self.writer.writeByte(']');
         }
 
+        pub fn writeComma(self: *Self) !void {
+            if (!self.first_response) {
+                if (self.elements == .array) try self.writer.writeByte(',');
+            } else self.first_response = false;
+        }
+
         pub fn appendResult(
             self: *Self,
             comptime fmt: []const u8,
             args: anytype,
         ) !void {
             if (self.rpc_info.id.len == 0) return error.MissingId;
-            if (!self.first_response) {
-                if (self.elements == .array) try self.writer.writeByte(',');
-            } else self.first_response = false;
+            try self.writeComma();
 
             try self.writer.print(
                 \\{{"jsonrpc":"2.0","id":{s},"result":
@@ -232,6 +236,7 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
 
         pub fn appendError(self: *Self, err: Error) !void {
             const id = if (self.rpc_info.id.len != 0) self.rpc_info.id else "null";
+            try self.writeComma();
             try self.writer.print(
                 \\{{"jsonrpc":"2.0","id":{s},"error":{{"code":{},"message":"{s}"}}}}
             , .{ id, @intFromEnum(err.code), err.note });
@@ -278,8 +283,10 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
                 .array => |array| {
                     var i: usize = 0;
                     while (array.at(i)) |ele| : (i += 1) {
-                        if (!ele.is(.OBJECT))
-                            return Error.init(.invalid_request, "Invalid request. Not an object.");
+                        if (!ele.is(.OBJECT)) {
+                            try self.appendError(Error.init(.invalid_request, "Invalid request. Not an object."));
+                            continue;
+                        }
 
                         if (try self.rpc_info.jsonParseImpl(ele)) |err|
                             return err;
@@ -547,12 +554,17 @@ test {
             ,
             \\[{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Not an object."}}]
         },
+        .{ // rpc call with invalid Batch
+            \\[1,2,3]
+            ,
+            \\[{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Not an object."}},{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Not an object."}},{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Not an object."}}]
+        },
     };
 
     for (input_expecteds) |ie| {
         const input, const expected = ie;
         var input_fbs = std.io.fixedBufferStream(input);
-        var buf: [256]u8 = undefined;
+        var buf: [512]u8 = undefined;
         var output_fbs = std.io.fixedBufferStream(&buf);
 
         var impl = protocol(.json_rpc, input_fbs.reader(), output_fbs.writer());
