@@ -231,9 +231,10 @@ pub fn Protocol(comptime R: type, comptime W: type) type {
         }
 
         pub fn appendError(self: *Self, err: Error) !void {
+            const id = if (self.rpc_info.id.len != 0) self.rpc_info.id else "null";
             try self.writer.print(
                 \\{{"jsonrpc":"2.0","id":{s},"error":{{"code":{},"message":"{s}"}}}}
-            , .{ self.rpc_info.id, @intFromEnum(err.code), err.note });
+            , .{ id, @intFromEnum(err.code), err.note });
         }
 
         pub fn parse(self: *Self, allocator: mem.Allocator) ?Error {
@@ -502,6 +503,11 @@ test {
             \\{"jsonrpc": "2.0", "method": "foobar", "id": "1"}
             ,
             \\{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}
+        },
+        .{
+            \\{"jsonrpc": "2.0", "method": "foobar, "params": "bar", "baz]
+            ,
+            \\{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server."}}
         },
     };
 
