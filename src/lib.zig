@@ -51,7 +51,7 @@ pub const RpcInfo = struct {
                 "The JSON sent is not a valid request object.",
             );
         const version = doc.at_key("jsonrpc") orelse
-            return Error.init(.invalid_request, "Missing 'jsonrpc' field.");
+            return Error.init(.invalid_request, "Invalid request. Missing 'jsonrpc' field.");
 
         if (!version.is(.STRING) or !mem.eql(u8, "2.0", try version.get_string()))
             return Error.init(
@@ -60,7 +60,7 @@ pub const RpcInfo = struct {
             );
 
         const id = doc.at_key("id") orelse
-            return Error.init(.invalid_request, "Missing 'id' field.");
+            return Error.init(.invalid_request, "Invalid request. Missing 'id' field.");
         // TODO simplify this logic
         if ((id.is(.DOUBLE) and !id.is(.INT64) and !id.is(.UINT64)) or
             id.is(.OBJECT) or id.is(.ARRAY))
@@ -70,7 +70,7 @@ pub const RpcInfo = struct {
             );
 
         const method = doc.at_key("method") orelse
-            return Error.init(.invalid_request, "Missing 'method' field.");
+            return Error.init(.invalid_request, "Invalid request. Missing 'method' field.");
 
         if (!method.is(.STRING))
             return Error.init(.invalid_request, "'method' field must be a string.");
@@ -483,29 +483,53 @@ test {
     });
 
     const input_expecteds = [_][2][]const u8{
-        .{
+        .{ // rpc call with positional parameters
             \\{"jsonrpc": "2.0", "method": "add", "params": [1,2,4], "id": 1}
             ,
             \\{"jsonrpc":"2.0","id":1,"result":7}
         },
-        .{
+        .{ // rpc call with named parameters
             \\{"jsonrpc": "2.0", "method": "add_named", "params": {"a": 1, "b": 2}, "id": 2}
             ,
             \\{"jsonrpc":"2.0","id":2,"result":3}
         },
-        .{
+        // TODO
+        // .{ // notifications
+        //     \\{"jsonrpc": "2.0", "method": "update", "params": [1,2,3,4,5]}
+        //     ,
+        //     "",
+        // },
+        // .{
+        //     \\{"jsonrpc": "2.0", "method": "foobar"}
+        //     ,
+        //     "",
+        // },
+        .{ // valid rpc call Batch
             \\[{"jsonrpc": "2.0", "method": "add", "params": [1,2,4],  "id": 1},
             \\ {"jsonrpc": "2.0", "method": "add", "params": [1,2,10], "id": 2}]
             ,
             \\[{"jsonrpc":"2.0","id":1,"result":7},{"jsonrpc":"2.0","id":2,"result":13}]
         },
-        .{
+        .{ // rpc call of non-existent method
             \\{"jsonrpc": "2.0", "method": "foobar", "id": "1"}
             ,
             \\{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}
         },
-        .{
+        .{ // rpc call with invalid JSON
             \\{"jsonrpc": "2.0", "method": "foobar, "params": "bar", "baz]
+            ,
+            \\{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server."}}
+        },
+        .{ // rpc call with invalid Request object
+            \\{"jsonrpc": "2.0", "method": 1, "params": "bar"}
+            ,
+            \\{"jsonrpc":"2.0","id":null,"error":{"code":-32600,"message":"Invalid request. Missing 'id' field."}}
+        },
+        .{ // rpc call Batch, invalid JSON
+            \\[
+            \\  {"jsonrpc": "2.0", "method": "sum", "params": [1,2,4], "id": "1"},
+            \\  {"jsonrpc": "2.0", "method"
+            \\]
             ,
             \\{"jsonrpc":"2.0","id":null,"error":{"code":-32700,"message":"Invalid JSON was received by the server."}}
         },
