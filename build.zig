@@ -10,13 +10,6 @@ pub fn build(b: *std.Build) void {
         .dependencies = &.{.{ .name = "simdjzon", .module = simdjzon_mod }},
     });
     _ = mod;
-    // const lib = b.addStaticLibrary(.{
-    //     .name = "simdjzon-rpc",
-    //     .root_source_file = .{ .path = "src/lib.zig" },
-    //     .target = target,
-    //     .optimize = optimize,
-    // });
-    // b.installArtifact(lib);
 
     const main_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/lib.zig" },

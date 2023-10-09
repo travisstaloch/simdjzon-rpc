@@ -18,5 +18,7 @@ def main():
     assert response["jsonrpc"]
     assert response["id"] == "0"
 
+    print("ok")
+
 if __name__ == "__main__":
     main()
