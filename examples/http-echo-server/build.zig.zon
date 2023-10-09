@@ -1,0 +1,10 @@
+.{
+    .name = "http-echo-server",
+    .version = "0.0.1",
+    .dependencies = .{
+        .@"simdjzon-rpc" = .{
+            .url = "https://github.com/travisstaloch/simdjzon-rpc/archive/cb15d74531d2bcd3770da443e3e558b37f9130f6.tar.gz",
+            .hash = "122047ae338edc118ea9dc4fd013f394fe5b5fa84dcbb265bda1242d9efb7f236ab7",
+        },
+    },
+}
