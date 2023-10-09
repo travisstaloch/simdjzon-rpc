@@ -9,20 +9,19 @@ pub fn main() !void {
     defer std.process.argsFree(alloc, args);
     var i: usize = 1;
     var port: u16 = 4000;
-    var verbose = false;
     while (i < args.len) : (i += 1) {
         if (std.mem.eql(u8, "-p", args[i])) {
             i += 1;
             port = try std.fmt.parseUnsigned(u16, args[i], 10);
         }
-        if (std.mem.eql(u8, "-v", args[i])) {
-            verbose = true;
-        }
     }
 
     // init server
     const address = try std.net.Ip4Address.parse("127.0.0.1", port);
-    var server = std.http.Server.init(alloc, .{ .reuse_port = true, .reuse_address = true });
+    var server = std.http.Server.init(
+        alloc,
+        .{ .reuse_port = true, .reuse_address = true },
+    );
     defer server.deinit();
     try server.listen(.{ .in = address });
     std.debug.print("\nlistening on http://{}\n", .{address});

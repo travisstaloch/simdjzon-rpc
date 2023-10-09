@@ -17,7 +17,7 @@ pub fn build(b: *std.Build) void {
     exe.addModule("simdjzon-rpc", mod);
     b.installArtifact(exe);
     const run_exe = b.addRunArtifact(exe);
-    const run_exe_step = b.step("run", "Run library tests");
+    const run_exe_step = b.step("run", "Run the echo server");
     run_exe_step.dependOn(&run_exe.step);
     if (b.args) |args| run_exe.addArgs(args);
 }
