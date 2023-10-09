@@ -77,7 +77,7 @@ pub const RpcInfo = struct {
         const params_present_and_valid = if (doc.at_key("params")) |params|
             params.is(.ARRAY) or params.is(.OBJECT)
         else
-            false;
+            true;
 
         if (!params_present_and_valid)
             return Error.init(
@@ -497,6 +497,11 @@ test {
             \\ {"jsonrpc": "2.0", "method": "add", "params": [1,2,10], "id": 2}]
             ,
             \\[{"jsonrpc":"2.0","id":1,"result":7},{"jsonrpc":"2.0","id":2,"result":13}]
+        },
+        .{
+            \\{"jsonrpc": "2.0", "method": "foobar", "id": "1"}
+            ,
+            \\{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}
         },
     };
 
