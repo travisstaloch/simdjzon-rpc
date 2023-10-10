@@ -181,7 +181,7 @@ pub const JsonValue = union(enum) {
     }
 };
 
-pub fn Rpc(comptime R: type, comptime W: type) type {
+fn RpcImpl(comptime R: type, comptime W: type) type {
     return struct {
         parser: dom.Parser,
         input: []const u8 = &.{},
@@ -201,10 +201,10 @@ pub fn Rpc(comptime R: type, comptime W: type) type {
             allocator.free(self.input);
         }
 
-        pub fn startResponse(self: *Self) !void {
+        fn startResponse(self: *Self) !void {
             if (self.elements == .array) try self.writer.writeByte('[');
         }
-        pub fn finishResponse(self: *Self) !void {
+        fn finishResponse(self: *Self) !void {
             if (self.elements == .array) try self.writer.writeByte(']');
         }
 
@@ -334,7 +334,7 @@ pub fn Rpc(comptime R: type, comptime W: type) type {
 
 const ConstFbs = std.io.FixedBufferStream([]const u8);
 const Fbs = std.io.FixedBufferStream([]u8);
-pub const FbsApi = RpcApi(ConstFbs.Reader, Fbs.Writer);
+pub const FbsRpc = Rpc(ConstFbs.Reader, Fbs.Writer);
 
 test "named params" {
     var input_fbs = std.io.fixedBufferStream(
@@ -343,7 +343,7 @@ test "named params" {
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
 
-    var rpc = FbsApi.init(input_fbs.reader(), output_fbs.writer());
+    var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
     defer rpc.deinit(talloc);
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
@@ -367,7 +367,7 @@ test "indexed params" {
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
 
-    var rpc = FbsApi.init(input_fbs.reader(), output_fbs.writer());
+    var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
     defer rpc.deinit(talloc);
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
@@ -423,9 +423,9 @@ pub const Engine = struct {
 };
 
 /// exposes type erased methods for use in user implementations
-pub fn RpcApi(comptime R: type, comptime W: type) type {
+pub fn Rpc(comptime R: type, comptime W: type) type {
     return struct {
-        pub const TypedRpc = Rpc(R, W);
+        pub const TypedRpc = RpcImpl(R, W);
 
         /// initialize a jsonrpc object with the given reader and writer
         pub fn init(reader: R, writer: W) TypedRpc {
@@ -480,10 +480,10 @@ test {
             fn func(rpc_impl: *anyopaque) void {
                 var r: i64 = 0;
                 var i: usize = 0;
-                while (FbsApi.getParamByIndex(i, rpc_impl)) |param| : (i += 1) {
+                while (FbsRpc.getParamByIndex(i, rpc_impl)) |param| : (i += 1) {
                     r += param.int;
                 }
-                FbsApi.writeResult("{}", .{r}, rpc_impl) catch
+                FbsRpc.writeResult("{}", .{r}, rpc_impl) catch
                     @panic("write failed");
             }
         }.func,
@@ -493,9 +493,9 @@ test {
         .name = "sum_named",
         .callback = struct {
             fn func(rpc_impl: *anyopaque) void {
-                const a = FbsApi.getParamByName("a", rpc_impl) orelse unreachable;
-                const b = FbsApi.getParamByName("b", rpc_impl) orelse unreachable;
-                FbsApi.writeResult("{}", .{a.int + b.int}, rpc_impl) catch
+                const a = FbsRpc.getParamByName("a", rpc_impl) orelse unreachable;
+                const b = FbsRpc.getParamByName("b", rpc_impl) orelse unreachable;
+                FbsRpc.writeResult("{}", .{a.int + b.int}, rpc_impl) catch
                     @panic("write failed");
             }
         }.func,
@@ -505,9 +505,9 @@ test {
         .name = "subtract",
         .callback = struct {
             fn func(rpc_impl: *anyopaque) void {
-                const a = FbsApi.getParamByIndex(0, rpc_impl) orelse unreachable;
-                const b = FbsApi.getParamByIndex(1, rpc_impl) orelse unreachable;
-                FbsApi.writeResult("{}", .{a.int - b.int}, rpc_impl) catch
+                const a = FbsRpc.getParamByIndex(0, rpc_impl) orelse unreachable;
+                const b = FbsRpc.getParamByIndex(1, rpc_impl) orelse unreachable;
+                FbsRpc.writeResult("{}", .{a.int - b.int}, rpc_impl) catch
                     @panic("write failed");
             }
         }.func,
@@ -517,7 +517,7 @@ test {
         .name = "get_data",
         .callback = struct {
             fn func(rpc_impl: *anyopaque) void {
-                FbsApi.writeResult(
+                FbsRpc.writeResult(
                     \\["hello",5]
                 , .{}, rpc_impl) catch
                     @panic("write failed");
@@ -620,7 +620,7 @@ test {
         var buf: [512]u8 = undefined;
         var output_fbs = std.io.fixedBufferStream(&buf);
 
-        var rpc = FbsApi.init(input_fbs.reader(), output_fbs.writer());
+        var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
         defer rpc.deinit(talloc);
         try e.parseAndRespond(&rpc);
 

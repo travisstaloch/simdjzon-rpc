@@ -29,7 +29,7 @@ pub fn main() !void {
     // init jsonrpc engine
     var e = jsonrpc.Engine{ .allocator = alloc };
     defer e.deinit();
-    const Api = jsonrpc.RpcApi(
+    const Rpc = jsonrpc.Rpc(
         std.http.Server.Response.Reader,
         std.http.Server.Response.Writer,
     );
@@ -38,8 +38,8 @@ pub fn main() !void {
         .name = "echo",
         .callback = struct {
             fn func(rpc_impl: *anyopaque) void {
-                const content = Api.getParamByIndex(0, rpc_impl) orelse unreachable;
-                Api.writeResult(
+                const content = Rpc.getParamByIndex(0, rpc_impl) orelse unreachable;
+                Rpc.writeResult(
                     \\"{s}"
                 , .{content.string}, rpc_impl) catch
                     @panic("write failed");
@@ -57,7 +57,7 @@ pub fn main() !void {
         defer _ = res.reset();
         try res.wait();
 
-        var rpc = Api.init(res.reader(), res.writer());
+        var rpc = Rpc.init(res.reader(), res.writer());
         defer rpc.deinit(alloc);
         res.transfer_encoding = .chunked;
         try res.headers.append("content-type", "application/json");
