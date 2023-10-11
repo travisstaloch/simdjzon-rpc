@@ -21,7 +21,8 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_main_tests.step);
 
-    try buildExample(b, target, optimize, mod, "http-echo-server");
+    try buildExample(b, target, optimize, mod, "http-echo-server", &.{});
+    try buildExample(b, target, optimize, mod, "bench", &.{"c"});
 }
 
 fn buildExample(
@@ -30,6 +31,7 @@ fn buildExample(
     optimize: std.builtin.OptimizeMode,
     mod: *std.Build.Module,
     name: []const u8,
+    libs: []const []const u8,
 ) !void {
     const exe = b.addExecutable(.{
         .name = name,
@@ -42,7 +44,8 @@ fn buildExample(
     exe.addModule("simdjzon-rpc", mod);
     b.installArtifact(exe);
     const run_exe = b.addRunArtifact(exe);
-    const run_exe_step = b.step("run", b.fmt("Run {s}", .{name}));
+    const run_exe_step = b.step(b.fmt("{s}", .{name}), b.fmt("Run {s}", .{name}));
     run_exe_step.dependOn(&run_exe.step);
     if (b.args) |args| run_exe.addArgs(args);
+    for (libs) |lib| exe.linkSystemLibrary(lib);
 }
