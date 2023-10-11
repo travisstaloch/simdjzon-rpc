@@ -38,8 +38,7 @@ pub const RpcInfo = struct {
     pub const empty = RpcInfo{ .id = "", .method_name = "" };
 
     // custom json parsing method
-    pub fn jsonParse(doc: dom.Element, args: anytype) !void {
-        const out = args[0];
+    pub fn jsonParse(doc: dom.Element, out: anytype, _: simdjzon.common.GetOptions) !void {
         if (try out.jsonParseImpl(doc)) |err| {
             std.log.err("{} - {s}", .{ err.code, err.note });
             return error.UserDefined;
