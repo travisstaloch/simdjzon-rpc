@@ -397,12 +397,12 @@ test "indexed params" {
     try testing.expect(rpc.getParamByIndex(2) == null);
 }
 
-pub const Callback = fn (rpc_impl: *anyopaque) void;
+pub const Callback = fn (rpc_ptr: *anyopaque) void;
 
 pub const NamedCallback = struct {
     name: []const u8,
     callback: *const Callback,
-    rpc_impl: *anyopaque = undefined,
+    rpc_ptr: *anyopaque = undefined,
 };
 
 pub const Engine = struct {
@@ -417,9 +417,9 @@ pub const Engine = struct {
         try e.callbacks.put(e.allocator, named_callback.name, named_callback);
     }
 
-    fn findAndCall(engine: Engine, rpc_impl: *anyopaque, name: []const u8) bool {
+    fn findAndCall(engine: Engine, rpc_ptr: *anyopaque, name: []const u8) bool {
         const named_cb = engine.callbacks.get(name) orelse return false;
-        named_cb.callback(rpc_impl);
+        named_cb.callback(rpc_ptr);
         return true;
     }
 
@@ -455,30 +455,30 @@ pub fn Rpc(comptime R: type, comptime W: type) type {
         pub fn writeResult(
             comptime fmt: []const u8,
             args: anytype,
-            rpc_impl: *anyopaque,
+            rpc_ptr: *anyopaque,
         ) !void {
-            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_impl));
+            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_ptr));
             try rpc.writeResult(fmt, args);
         }
 
         /// write a jsonrpc error record
         pub fn writeError(
             err: Error,
-            rpc_impl: *anyopaque,
+            rpc_ptr: *anyopaque,
         ) !void {
-            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_impl));
+            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_ptr));
             try rpc.writeError(err);
         }
 
         /// return a 'params' array element at the given index if it exists
-        pub fn getParamByIndex(index: usize, rpc_impl: *anyopaque) ?JsonValue {
-            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_impl));
+        pub fn getParamByIndex(index: usize, rpc_ptr: *anyopaque) ?JsonValue {
+            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_ptr));
             return rpc.getParamByIndex(index);
         }
 
         /// return a 'params' object field with the given name if it exists
-        pub fn getParamByName(name: []const u8, rpc_impl: *anyopaque) ?JsonValue {
-            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_impl));
+        pub fn getParamByName(name: []const u8, rpc_ptr: *anyopaque) ?JsonValue {
+            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_ptr));
             return rpc.getParamByName(name);
         }
     };
@@ -491,13 +491,13 @@ test {
     try e.putCallback(.{
         .name = "sum",
         .callback = struct {
-            fn func(rpc_impl: *anyopaque) void {
+            fn func(rpc_ptr: *anyopaque) void {
                 var r: i64 = 0;
                 var i: usize = 0;
-                while (FbsRpc.getParamByIndex(i, rpc_impl)) |param| : (i += 1) {
+                while (FbsRpc.getParamByIndex(i, rpc_ptr)) |param| : (i += 1) {
                     r += param.int;
                 }
-                FbsRpc.writeResult("{}", .{r}, rpc_impl) catch
+                FbsRpc.writeResult("{}", .{r}, rpc_ptr) catch
                     @panic("write failed");
             }
         }.func,
@@ -506,10 +506,10 @@ test {
     try e.putCallback(.{
         .name = "sum_named",
         .callback = struct {
-            fn func(rpc_impl: *anyopaque) void {
-                const a = FbsRpc.getParamByName("a", rpc_impl) orelse unreachable;
-                const b = FbsRpc.getParamByName("b", rpc_impl) orelse unreachable;
-                FbsRpc.writeResult("{}", .{a.int + b.int}, rpc_impl) catch
+            fn func(rpc_ptr: *anyopaque) void {
+                const a = FbsRpc.getParamByName("a", rpc_ptr) orelse unreachable;
+                const b = FbsRpc.getParamByName("b", rpc_ptr) orelse unreachable;
+                FbsRpc.writeResult("{}", .{a.int + b.int}, rpc_ptr) catch
                     @panic("write failed");
             }
         }.func,
@@ -518,10 +518,10 @@ test {
     try e.putCallback(.{
         .name = "subtract",
         .callback = struct {
-            fn func(rpc_impl: *anyopaque) void {
-                const a = FbsRpc.getParamByIndex(0, rpc_impl) orelse unreachable;
-                const b = FbsRpc.getParamByIndex(1, rpc_impl) orelse unreachable;
-                FbsRpc.writeResult("{}", .{a.int - b.int}, rpc_impl) catch
+            fn func(rpc_ptr: *anyopaque) void {
+                const a = FbsRpc.getParamByIndex(0, rpc_ptr) orelse unreachable;
+                const b = FbsRpc.getParamByIndex(1, rpc_ptr) orelse unreachable;
+                FbsRpc.writeResult("{}", .{a.int - b.int}, rpc_ptr) catch
                     @panic("write failed");
             }
         }.func,
@@ -530,10 +530,10 @@ test {
     try e.putCallback(.{
         .name = "get_data",
         .callback = struct {
-            fn func(rpc_impl: *anyopaque) void {
+            fn func(rpc_ptr: *anyopaque) void {
                 FbsRpc.writeResult(
                     \\["hello",5]
-                , .{}, rpc_impl) catch
+                , .{}, rpc_ptr) catch
                     @panic("write failed");
             }
         }.func,
