@@ -3,8 +3,8 @@
     .version = "0.0.1",
     .dependencies = .{
         .simdjzon = .{
-            .url = "https://github.com/travisstaloch/simdjzon/archive/cbf1ca9f56c9f7dfb6159b3e6b97afe9490e0f55.tar.gz",
-            .hash = "12204e0b3663155330d0bfb63fdcb81641bd0ac6ef83aaa13faf22640c01bc381a3c",
+            .url = "https://github.com/travisstaloch/simdjzon/archive/15a9ff4a432eadf9b8795e92984c3fdd74f4153e.tar.gz",
+            .hash = "122096968add38db598f8cdf7c773453b150d85513e815b894efba3d50b043310099",
         },
     },
 }

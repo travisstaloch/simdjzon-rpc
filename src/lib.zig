@@ -183,10 +183,9 @@ pub const JsonValue = union(enum) {
 fn RpcImpl(comptime R: type, comptime W: type) type {
     return struct {
         parser: dom.Parser,
-        input: []const u8 = &.{},
         info: RpcInfo = RpcInfo.empty,
         elements: Elements,
-        is_first_response: bool = true,
+        flags: std.EnumSet(Flags) = init_flags,
         // TODO use AnyReader/Writer so that this type won't need to be generic
         reader: Reader,
         writer: Writer,
@@ -194,10 +193,15 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         pub const Reader = R;
         pub const Writer = W;
         const Self = @This();
+        pub const Flags = enum { is_first_response, is_init };
+        const init_flags = blk: {
+            var flags = std.EnumSet(Flags).initEmpty();
+            flags.insert(.is_first_response);
+            break :blk flags;
+        };
 
-        pub fn deinit(self: *Self, allocator: mem.Allocator) void {
+        pub fn deinit(self: *Self) void {
             self.parser.deinit();
-            allocator.free(self.input);
         }
 
         fn startResponse(self: *Self) !void {
@@ -208,9 +212,9 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         }
 
         fn writeComma(self: *Self) !void {
-            if (!self.is_first_response) {
+            if (!self.flags.contains(.is_first_response)) {
                 if (self.elements == .array) try self.writer.writeByte(',');
-            } else self.is_first_response = false;
+            } else self.flags.remove(.is_first_response);
         }
 
         /// write a jsonrpc result record to 'self.writer'
@@ -250,10 +254,14 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         /// respond().  if you want to manually initialize 'info', it can
         /// be done like this: `try self.info.jsonParseImpl(self.elements.element)`
         pub fn parse(self: *Self, allocator: mem.Allocator) ?Error {
-            self.input = self.reader.readAllAlloc(allocator, std.math.maxInt(u32)) catch
-                return Error.init(@enumFromInt(-32000), "Out of memory");
-            self.parser = dom.Parser.initFixedBuffer(allocator, self.input, .{}) catch
-                return Error.init(@enumFromInt(-32000), "Out of memory");
+            if (!self.flags.contains(.is_init)) {
+                self.parser = dom.Parser.initFromReader(allocator, self.reader, .{}) catch
+                    return Error.init(@enumFromInt(-32000), "Out of memory");
+                self.flags.insert(.is_init);
+            } else {
+                self.parser.initExistingFromReader(self.reader, .{}) catch
+                    return Error.init(@enumFromInt(-32000), "Out of memory");
+            }
 
             self.parser.parse() catch
                 return Error.init(.parse_error, "Invalid JSON was received by the server.");
@@ -343,7 +351,7 @@ test "named params" {
     var output_fbs = std.io.fixedBufferStream(&buf);
 
     var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
-    defer rpc.deinit(talloc);
+    defer rpc.deinit();
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
     _ = try rpc.info.jsonParseImpl(rpc.elements.element);
@@ -367,7 +375,7 @@ test "indexed params" {
     var output_fbs = std.io.fixedBufferStream(&buf);
 
     var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
-    defer rpc.deinit(talloc);
+    defer rpc.deinit();
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
     _ = try rpc.info.jsonParseImpl(rpc.elements.element);
@@ -620,7 +628,7 @@ test {
         var output_fbs = std.io.fixedBufferStream(&buf);
 
         var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
-        defer rpc.deinit(talloc);
+        defer rpc.deinit();
         try e.parseAndRespond(&rpc);
 
         try testing.expectEqualStrings(expected, output_fbs.getWritten());
