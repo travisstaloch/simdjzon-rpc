@@ -191,7 +191,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         writer: Writer,
 
         pub const Reader = R;
-        pub const Writer = W;
+        pub const Writer = std.io.BufferedWriter(std.mem.page_size, W);
         const Self = @This();
         pub const Flags = packed struct {
             is_first_response: bool = true,
@@ -203,15 +203,23 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         }
 
         fn startResponse(self: *Self) !void {
-            if (self.elements == .array) try self.writer.writeByte('[');
+            if (self.elements == .array) try self.writer.writer().writeByte('[');
         }
+
         fn finishResponse(self: *Self) !void {
-            if (self.elements == .array) try self.writer.writeByte(']');
+            if (self.elements == .array) {
+                // instead of writing an empty array, skip flush so we don't
+                // write anything
+                if (self.writer.end == 1 and self.writer.buf[0] == '[')
+                    return;
+                try self.writer.writer().writeByte(']');
+            }
+            try self.writer.flush();
         }
 
         fn writeComma(self: *Self) !void {
             if (!self.flags.is_first_response) {
-                if (self.elements == .array) try self.writer.writeByte(',');
+                if (self.elements == .array) try self.writer.writer().writeByte(',');
             } else self.flags.is_first_response = false;
         }
 
@@ -224,7 +232,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
             if (self.info.id.len == 0) return error.MissingId;
             try self.writeComma();
 
-            try self.writer.print(
+            try self.writer.writer().print(
                 \\{{"jsonrpc":"2.0","result":
                 ++ fmt ++
                     \\,"id":"{s}"}}
@@ -237,11 +245,11 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         pub fn writeError(self: *Self, err: Error) !void {
             try self.writeComma();
             if (self.info.id.len == 0)
-                try self.writer.print(
+                try self.writer.writer().print(
                     \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":null}}
                 , .{ @intFromEnum(err.code), err.note })
             else
-                try self.writer.print(
+                try self.writer.writer().print(
                     \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":"{s}"}}
                 , .{ @intFromEnum(err.code), err.note, self.info.id });
         }
@@ -415,19 +423,20 @@ pub const Engine = struct {
         return true;
     }
 
-    pub fn parseAndRespond(engine: Engine, rpc_impl: anytype) !void {
-        if (rpc_impl.parse(engine.allocator)) |err| {
-            try rpc_impl.writeError(err);
+    pub fn parseAndRespond(engine: Engine, rpc: anytype) !void {
+        if (rpc.parse(engine.allocator)) |err| {
+            try rpc.writeError(err);
+            try rpc.writer.flush();
             return;
         }
-        try rpc_impl.startResponse();
-        if (try rpc_impl.respond(engine, findAndCall)) |err|
-            try rpc_impl.writeError(err);
-        try rpc_impl.finishResponse();
+        try rpc.startResponse();
+        if (try rpc.respond(engine, findAndCall)) |err|
+            try rpc.writeError(err);
+        try rpc.finishResponse();
     }
 };
 
-/// exposes type erased methods for use in user implementations
+/// exposes user facing type erased methods
 pub fn Rpc(comptime R: type, comptime W: type) type {
     return struct {
         pub const TypedRpc = RpcImpl(R, W);
@@ -436,7 +445,7 @@ pub fn Rpc(comptime R: type, comptime W: type) type {
         pub fn init(reader: R, writer: W) TypedRpc {
             return .{
                 .reader = reader,
-                .writer = writer,
+                .writer = std.io.bufferedWriter(writer),
                 .elements = .{ .element = undefined },
                 .parser = undefined,
             };
@@ -614,8 +623,7 @@ test {
             \\    {"jsonrpc": "2.0", "method": "notify_hello", "params": [7]}
             \\]
             ,
-            // FIXME this should be empty, no array
-            "[]",
+            "",
         },
     };
 
