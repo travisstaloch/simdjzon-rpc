@@ -1,8 +1,14 @@
 const std = @import("std");
 const jsonrpc = @import("simdjzon-rpc");
+const CountingAllocator = @import("CountingAllocator.zig");
+const build_options = @import("build_options");
 
 pub fn main() !void {
-    const alloc = std.heap.c_allocator;
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 20 }){};
+    defer _ = gpa.deinit();
+    var ca = CountingAllocator.init(gpa.allocator(), .{ .timings = true });
+    // var ca = CountingAllocator.init(std.heap.c_allocator, .{ .timings = true });
+    const alloc = ca.allocator();
 
     var e = jsonrpc.Engine{ .allocator = alloc };
     defer e.deinit();
@@ -30,7 +36,8 @@ pub fn main() !void {
 
     var req_count: f64 = 0;
     var timer = try std.time.Timer.start();
-    while (req_count < 30_000) : (req_count += 1) {
+    while (req_count < build_options.bench_iterations) : (req_count += 1) {
+        // std.debug.print("req_count={d:.0}\n", .{req_count});
         infbs.pos = 0;
         outfbs.pos = 0;
         defer rpc.deinit(alloc);
@@ -43,4 +50,5 @@ pub fn main() !void {
         "\n reqs={d:.0}\n time={}\nreq/s={d:.1}K\n",
         .{ req_count, std.fmt.fmtDuration(elapsed), req_count / seconds / 1000 },
     );
+    ca.printSummary(std.debug.print);
 }

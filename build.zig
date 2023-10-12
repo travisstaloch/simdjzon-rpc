@@ -9,6 +9,14 @@ pub fn build(b: *std.Build) void {
         .source_file = .{ .path = "src/lib.zig" },
         .dependencies = &.{.{ .name = "simdjzon", .module = simdjzon_mod }},
     });
+    const build_options = b.addOptions();
+    build_options.addOption(
+        usize,
+        "bench_iterations",
+        b.option(usize, "bench-iterations", "for benchmarking. number times " ++
+            "for benchmark to loop. default 100.") orelse 100,
+    );
+    const build_opts_mod = build_options.createModule();
 
     const main_tests = b.addTest(.{
         .root_source_file = .{ .path = "src/lib.zig" },
@@ -21,15 +29,22 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_main_tests.step);
 
-    try buildExample(b, target, optimize, mod, "http-echo-server", &.{});
-    try buildExample(b, target, optimize, mod, "bench", &.{"c"});
+    try buildExample(b, target, optimize, &.{.{ "simdjzon-rpc", mod }}, "http-echo-server", &.{});
+    try buildExample(b, target, optimize, &.{
+        .{ "simdjzon-rpc", mod },
+        .{ "build_options", build_opts_mod },
+    }, "bench", &.{"c"});
+    try buildExample(b, target, optimize, &.{
+        .{ "build_options", build_opts_mod },
+    }, "bench-zig-json-rpc", &.{"c"});
 }
 
+const NamedModule = struct { []const u8, *std.Build.Module };
 fn buildExample(
     b: *std.Build,
     target: std.zig.CrossTarget,
     optimize: std.builtin.OptimizeMode,
-    mod: *std.Build.Module,
+    mods: []const NamedModule,
     name: []const u8,
     libs: []const []const u8,
 ) !void {
@@ -41,7 +56,7 @@ fn buildExample(
         .target = target,
         .optimize = optimize,
     });
-    exe.addModule("simdjzon-rpc", mod);
+    for (mods) |mod| exe.addModule(mod[0], mod[1]);
     b.installArtifact(exe);
     const run_exe = b.addRunArtifact(exe);
     const run_exe_step = b.step(b.fmt("{s}", .{name}), b.fmt("Run {s}", .{name}));
