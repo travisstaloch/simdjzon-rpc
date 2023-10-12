@@ -33,15 +33,19 @@ pub fn main() !void {
     var buf: [256]u8 = undefined;
     var outfbs = std.io.fixedBufferStream(&buf);
     var rpc = Rpc.init(infbs.reader(), outfbs.writer());
-
+    defer rpc.deinit();
     var req_count: f64 = 0;
     var timer = try std.time.Timer.start();
     while (req_count < build_options.bench_iterations) : (req_count += 1) {
         // std.debug.print("req_count={d:.0}\n", .{req_count});
         infbs.pos = 0;
         outfbs.pos = 0;
-        defer rpc.deinit(alloc);
+        defer rpc.parser.clearRetainingCapacity();
+
         try e.parseAndRespond(&rpc);
+        if (std.mem.indexOf(u8, outfbs.getWritten(),
+            \\"result":"hello world"
+        ) == null) return error.UnexpectedResponse;
     }
 
     const elapsed = timer.lap();
