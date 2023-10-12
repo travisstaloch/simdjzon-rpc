@@ -185,7 +185,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         parser: dom.Parser,
         info: RpcInfo = RpcInfo.empty,
         elements: Elements,
-        flags: std.EnumSet(Flags) = init_flags,
+        flags: Flags = .{},
         // TODO use AnyReader/Writer so that this type won't need to be generic
         reader: Reader,
         writer: Writer,
@@ -193,11 +193,9 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         pub const Reader = R;
         pub const Writer = W;
         const Self = @This();
-        pub const Flags = enum { is_first_response, is_init };
-        const init_flags = blk: {
-            var flags = std.EnumSet(Flags).initEmpty();
-            flags.insert(.is_first_response);
-            break :blk flags;
+        pub const Flags = packed struct {
+            is_first_response: bool = true,
+            is_init: bool = false,
         };
 
         pub fn deinit(self: *Self) void {
@@ -212,9 +210,9 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         }
 
         fn writeComma(self: *Self) !void {
-            if (!self.flags.contains(.is_first_response)) {
+            if (!self.flags.is_first_response) {
                 if (self.elements == .array) try self.writer.writeByte(',');
-            } else self.flags.remove(.is_first_response);
+            } else self.flags.is_first_response = false;
         }
 
         /// write a jsonrpc result record to 'self.writer'
@@ -254,10 +252,10 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         /// respond().  if you want to manually initialize 'info', it can
         /// be done like this: `try self.info.jsonParseImpl(self.elements.element)`
         pub fn parse(self: *Self, allocator: mem.Allocator) ?Error {
-            if (!self.flags.contains(.is_init)) {
+            if (!self.flags.is_init) {
                 self.parser = dom.Parser.initFromReader(allocator, self.reader, .{}) catch
                     return Error.init(@enumFromInt(-32000), "Out of memory");
-                self.flags.insert(.is_init);
+                self.flags.is_init = true;
             } else {
                 self.parser.initExistingFromReader(self.reader, .{}) catch
                     return Error.init(@enumFromInt(-32000), "Out of memory");
