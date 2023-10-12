@@ -1,9 +1,15 @@
 const std = @import("std");
 const jsonrpc = @import("simdjzon-rpc");
+var serverptr: *std.http.Server = undefined;
 
 pub fn main() !void {
-    var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    const alloc = arena.allocator();
+    // var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
+    // const alloc = arena.allocator();
+    const Gpa = std.heap.GeneralPurposeAllocator(.{});
+    var gpa = Gpa{};
+    defer _ = gpa.deinit();
+    const alloc = gpa.allocator();
+
     // parse args
     const args = try std.process.argsAlloc(alloc);
     defer std.process.argsFree(alloc, args);
@@ -22,6 +28,7 @@ pub fn main() !void {
         alloc,
         .{ .reuse_port = true, .reuse_address = true },
     );
+    serverptr = &server;
     defer server.deinit();
     try server.listen(.{ .in = address });
     std.debug.print("\nlistening on http://{}\n", .{address});
@@ -47,12 +54,29 @@ pub fn main() !void {
         }.func,
     });
 
+    // handle ctrl+c
+    try std.os.sigaction(std.os.SIG.INT, &.{
+        .handler = .{
+            .handler = struct {
+                fn func(sig: c_int) callconv(.C) void {
+                    _ = sig;
+                    std.os.shutdown(serverptr.socket.sockfd.?, .both) catch unreachable;
+                }
+            }.func,
+        },
+        .mask = std.os.empty_sigset,
+        .flags = 0,
+    }, null);
+
     // unbuffered echo server - handle requests
     while (true) {
-        var res = try server.accept(.{
+        var res = server.accept(.{
             .allocator = alloc,
             .header_strategy = .{ .dynamic = std.mem.page_size },
-        });
+        }) catch |err| switch (err) {
+            error.SocketNotListening => break,
+            else => return err,
+        };
         defer res.deinit();
         defer _ = res.reset();
         try res.wait();
@@ -65,4 +89,6 @@ pub fn main() !void {
         try e.parseAndRespond(&rpc);
         try res.finish();
     }
+
+    std.debug.print("\ndone\n", .{});
 }
