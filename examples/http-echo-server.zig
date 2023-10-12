@@ -58,7 +58,7 @@ pub fn main() !void {
         try res.wait();
 
         var rpc = Rpc.init(res.reader(), res.writer());
-        defer rpc.deinit(alloc);
+        defer rpc.deinit();
         res.transfer_encoding = .chunked;
         try res.headers.append("content-type", "application/json");
         try res.do();
