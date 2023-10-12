@@ -1,7 +1,15 @@
 .{
     .name = "simdjzon-rpc",
     .version = "0.0.1",
-    .paths = .{""},
+    .paths = .{
+        ".gitignore",
+        "LICENSE",
+        "README.md",
+        "build.zig",
+        "build.zig.zon",
+        "examples/",
+        "src/",
+    },
     .dependencies = .{
         .simdjzon = .{
             .url = "https://github.com/travisstaloch/simdjzon/archive/15a9ff4a432eadf9b8795e92984c3fdd74f4153e.tar.gz",
