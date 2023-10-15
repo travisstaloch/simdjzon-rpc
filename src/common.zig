@@ -1,6 +1,11 @@
 const std = @import("std");
 const mem = std.mem;
 
+pub const Version = enum(u24) {
+    invalid,
+    two = mem.readIntBig(u24, "2.0"),
+};
+
 pub const Error = struct {
     code: Code,
     note: []const u8,

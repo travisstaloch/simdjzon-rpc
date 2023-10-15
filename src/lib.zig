@@ -34,11 +34,18 @@ pub const RpcInfo = struct {
         const version = doc.at_key("jsonrpc") orelse
             return Error.init(.invalid_request, "Invalid request. Missing 'jsonrpc' field.");
 
-        if (!version.is(.STRING) or !mem.eql(u8, "2.0", try version.get_string()))
-            return Error.init(
-                .invalid_request,
-                "Invalid request. 'version' field must equal '2.0'",
-            );
+        const invalid_version_error = Error.init(
+            .invalid_request,
+            "Invalid request. 'jsonrpc' field must equal '2.0'",
+        );
+
+        if (!version.is(.STRING)) return invalid_version_error;
+
+        const version_string = version.get_string() catch unreachable;
+        if (version_string.len != 3) return invalid_version_error;
+        const version_int = mem.readIntBig(u24, version_string[0..3]);
+        if (version_int != @intFromEnum(common.Version.two))
+            return invalid_version_error;
 
         if (doc.at_key("id")) |id| {
             if (id.is(.STRING)) {
