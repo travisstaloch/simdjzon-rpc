@@ -9,12 +9,13 @@ pub const common = @import("common.zig");
 pub const Error = common.Error;
 
 pub const RpcInfo = struct {
-    id_buf: [25]u8 = undefined,
-    id: []const u8,
+    id: Id,
     method: []const u8,
     element: dom.Element = undefined,
 
-    pub const empty = RpcInfo{ .id = "", .method = "" };
+    pub const Id = usize;
+    pub const empty_id = std.math.maxInt(Id);
+    pub const empty = RpcInfo{ .id = empty_id, .method = "" };
 
     // custom json parsing method
     pub fn jsonParse(doc: dom.Element, out: anytype, _: simdjzon.common.GetOptions) !void {
@@ -41,16 +42,26 @@ pub const RpcInfo = struct {
 
         if (doc.at_key("id")) |id| {
             if (id.is(.STRING)) {
-                out.id = try id.get_string();
-            } else if (id.is(.INT64) or id.is(.UINT64)) {
-                out.id = try std.fmt.bufPrint(&out.id_buf, "{}", .{try id.get_int64()});
+                out.id = std.fmt.parseInt(Id, try id.get_string(), 10) catch
+                    return Error.init(
+                    .invalid_request,
+                    "Invalid request. 'id' is an invalid integer.",
+                );
+            } else if (id.is(.INT64)) {
+                out.id = std.math.cast(Id, try id.get_int64()) orelse
+                    return Error.init(
+                    .invalid_request,
+                    "Invalid request. 'id' must be a positive integer.",
+                );
+            } else if (id.is(.UINT64)) {
+                out.id = try id.get_uint64();
             } else {
                 return Error.init(
                     .invalid_request,
                     "Invalid request. 'id' must be an integer or string.",
                 );
             }
-        } else out.id = "";
+        } else out.id = empty_id;
 
         const method = doc.at_key("method") orelse
             return Error.init(.invalid_request, "Invalid request. Missing 'method' field.");
@@ -83,11 +94,19 @@ fn checkField(
 ) !void {
     const ex = @field(expected, field_name);
     const ac = @field(actual, field_name);
-    testing.expectEqualStrings(ex, ac) catch |e| {
-        std.log.err("field '{s}' expected '{s}' actual '{s}'", .{ field_name, ex, ac });
-        std.log.err("input={s}", .{input});
-        return e;
-    };
+    if (comptime std.meta.trait.isZigString(@TypeOf(ac))) {
+        testing.expectEqualStrings(ex, ac) catch |e| {
+            std.log.err("field '{s}' expected '{s}' actual '{s}'", .{ field_name, ex, ac });
+            std.log.err("input={s}", .{input});
+            return e;
+        };
+    } else {
+        testing.expectEqual(ex, ac) catch |e| {
+            std.log.err("field '{s}' expected '{}' actual '{}'", .{ field_name, ex, ac });
+            std.log.err("input={s}", .{input});
+            return e;
+        };
+    }
 }
 
 test RpcInfo {
@@ -185,13 +204,13 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
             comptime fmt: []const u8,
             args: anytype,
         ) !void {
-            if (self.info.id.len == 0) return error.MissingId;
+            if (self.info.id == RpcInfo.empty_id) return error.MissingId;
             try self.writeComma();
 
             try self.writer.writer().print(
                 \\{{"jsonrpc":"2.0","result":
                 ++ fmt ++
-                    \\,"id":"{s}"}}
+                    \\,"id":"{}"}}
             ,
                 args ++ .{self.info.id},
             );
@@ -200,13 +219,13 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         /// write a jsonrpc error record to 'self.writer'
         pub fn writeError(self: *Self, err: Error) !void {
             try self.writeComma();
-            if (self.info.id.len == 0)
+            if (self.info.id == RpcInfo.empty_id)
                 try self.writer.writer().print(
                     \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":null}}
                 , .{ @intFromEnum(err.code), err.note })
             else
                 try self.writer.writer().print(
-                    \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":"{s}"}}
+                    \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":"{}"}}
                 , .{ @intFromEnum(err.code), err.note, self.info.id });
         }
 
@@ -273,7 +292,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                             self,
                             self.info.method,
                         )) {
-                            if (self.info.id.len != 0)
+                            if (self.info.id != RpcInfo.empty_id)
                                 try self.writeError(Error.init(.method_not_found, "Method not found"));
                         }
                     }
@@ -289,7 +308,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                         self,
                         self.info.method,
                     )) {
-                        if (self.info.id.len != 0)
+                        if (self.info.id != RpcInfo.empty_id)
                             return Error.init(.method_not_found, "Method not found");
                     }
                 },

@@ -72,23 +72,23 @@ pub const test_cases_1 = .{
     .{
         \\{"jsonrpc": "2.0", "method": "subtract", "params": [42, 23], "id": 1}
         ,
-        .{ .method = "subtract", .id = "1" },
+        .{ .method = "subtract", .id = 1 },
     },
     .{
         \\{"jsonrpc": "2.0", "method": "subtract", "params": [23, 42], "id": 2}
         ,
-        .{ .method = "subtract", .id = "2" },
+        .{ .method = "subtract", .id = 2 },
     },
     // call with named params
     .{
         \\{"jsonrpc": "2.0", "method": "subtract", "params": {"subtrahend": 23, "minuend": 42}, "id": 3}
         ,
-        .{ .method = "subtract", .id = "3" },
+        .{ .method = "subtract", .id = 3 },
     },
     .{
         \\{"jsonrpc": "2.0", "method": "subtract", "params": {"minuend": 42, "subtrahend": 23}, "id": 4}
         ,
-        .{ .method = "subtract", .id = "4" },
+        .{ .method = "subtract", .id = 4 },
     },
 };
 
