@@ -29,23 +29,25 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run library tests");
     test_step.dependOn(&run_main_tests.step);
 
-    try buildExample(b, target, optimize, &.{.{ "simdjzon-rpc", mod }}, "http-echo-server", &.{});
-    try buildExample(b, target, optimize, &.{
+    try buildExample("http-echo-server", b, target, optimize, &.{
+        .{ "simdjzon-rpc", mod },
+    }, &.{});
+    try buildExample("bench", b, target, optimize, &.{
         .{ "simdjzon-rpc", mod },
         .{ "build_options", build_opts_mod },
-    }, "bench", &.{"c"});
-    try buildExample(b, target, optimize, &.{
+    }, &.{"c"});
+    try buildExample("bench-zig-json-rpc", b, target, optimize, &.{
         .{ "build_options", build_opts_mod },
-    }, "bench-zig-json-rpc", &.{"c"});
+    }, &.{"c"});
 }
 
 const NamedModule = struct { []const u8, *std.Build.Module };
 fn buildExample(
+    name: []const u8,
     b: *std.Build,
     target: std.zig.CrossTarget,
     optimize: std.builtin.OptimizeMode,
     mods: []const NamedModule,
-    name: []const u8,
     libs: []const []const u8,
 ) !void {
     const exe = b.addExecutable(.{
