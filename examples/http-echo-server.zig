@@ -34,7 +34,7 @@ pub fn main() !void {
     std.debug.print("\nlistening on http://{}\n", .{address});
 
     // init jsonrpc engine
-    var e = jsonrpc.Engine{ .allocator = alloc };
+    var e = jsonrpc.common.Engine{ .allocator = alloc };
     defer e.deinit();
     const Rpc = jsonrpc.Rpc(
         std.http.Server.Response.Reader,

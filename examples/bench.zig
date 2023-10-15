@@ -10,7 +10,7 @@ pub fn main() !void {
     // var ca = CountingAllocator.init(std.heap.c_allocator, .{ .timings = true });
     const alloc = ca.allocator();
 
-    var e = jsonrpc.Engine{ .allocator = alloc };
+    var e = jsonrpc.common.Engine{ .allocator = alloc };
     defer e.deinit();
     const Rpc = jsonrpc.FbsRpc;
     try e.putCallback(.{

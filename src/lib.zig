@@ -4,7 +4,7 @@ const talloc = testing.allocator;
 const mem = std.mem;
 const simdjzon = @import("simdjzon");
 const dom = simdjzon.dom;
-const common = @import("common.zig");
+pub const common = @import("common.zig");
 
 pub const Error = common.Error;
 
