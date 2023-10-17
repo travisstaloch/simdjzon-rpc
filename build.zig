@@ -3,11 +3,17 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
-    const simdjzon_dep = b.dependency("simdjzon", .{ .target = target, .optimize = optimize });
+    const simdjzon_dep = b.dependency(
+        "simdjzon",
+        .{ .target = target, .optimize = optimize },
+    );
     const simdjzon_mod = simdjzon_dep.module("simdjzon");
     const mod = b.addModule("simdjzon-rpc", .{
         .source_file = .{ .path = "src/lib.zig" },
         .dependencies = &.{.{ .name = "simdjzon", .module = simdjzon_mod }},
+    });
+    const std_json_mod = b.addModule("std-json-rpc", .{
+        .source_file = .{ .path = "src/std-json.zig" },
     });
     const build_options = b.addOptions();
     build_options.addOption(
@@ -15,6 +21,19 @@ pub fn build(b: *std.Build) void {
         "bench_iterations",
         b.option(usize, "bench-iterations", "for benchmarking. number times " ++
             "for benchmark to loop. default 100.") orelse 100,
+    );
+    build_options.addOption(
+        bool,
+        "bench_show_summary",
+        b.option(bool, "bench-show-summary", "for benchmarking. whether or " ++
+            " not to show timing and memory usage summary.") orelse false,
+    );
+    build_options.addOption(
+        bool,
+        "bench_use_gpa",
+        b.option(bool, "bench-use-gpa", "for benchmarking. whether or " ++
+            " not to use zig's general purpose allocator.  use " ++
+            " std.heap.c_allocator when false.") orelse false,
     );
     const build_opts_mod = build_options.createModule();
 
@@ -36,7 +55,8 @@ pub fn build(b: *std.Build) void {
         .{ "simdjzon-rpc", mod },
         .{ "build_options", build_opts_mod },
     }, &.{"c"});
-    try buildExample("bench-zig-json-rpc", b, target, optimize, &.{
+    try buildExample("bench-std-json", b, target, optimize, &.{
+        .{ "std-json-rpc", std_json_mod },
         .{ "build_options", build_opts_mod },
     }, &.{"c"});
 }
