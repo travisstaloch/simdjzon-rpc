@@ -127,7 +127,6 @@ fn printTimed(
 
 pub fn printSummary(
     ca: CountingAllocator,
-    // precision: Precision,
     comptime printfn: fn (comptime fmt: []const u8, args: anytype) void,
 ) void {
     printfn("\n" ++ fmt ++ "{d:.1}\n", .{ "total_bytes_allocated", std.fmt.fmtIntSizeBin(ca.total_bytes_allocated) });

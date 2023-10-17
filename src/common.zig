@@ -2,7 +2,6 @@ const std = @import("std");
 const mem = std.mem;
 
 pub const Version = enum(u24) {
-    invalid,
     two = mem.readIntBig(u24, "2.0"),
 };
 
@@ -52,7 +51,7 @@ pub const Engine = struct {
         try e.callbacks.put(e.allocator, named_callback.name, named_callback);
     }
 
-    fn findAndCall(engine: Engine, rpc_ptr: *anyopaque, name: []const u8) bool {
+    pub fn findAndCall(engine: Engine, rpc_ptr: *anyopaque, name: []const u8) bool {
         const named_cb = engine.callbacks.get(name) orelse return false;
         named_cb.callback(rpc_ptr);
         return true;
@@ -184,3 +183,9 @@ pub const test_cases_2 = [_][2][]const u8{
         "",
     },
 };
+
+pub fn benchInputExpected(
+    index: usize,
+) [2][]const u8 {
+    return test_cases_2[@mod(index, test_cases_2.len)];
+}
