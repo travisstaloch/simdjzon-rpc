@@ -1,19 +1,11 @@
 .{
     .name = "simdjzon-rpc",
     .version = "0.0.1",
-    .paths = .{
-        ".gitignore",
-        "LICENSE",
-        "README.md",
-        "build.zig",
-        "build.zig.zon",
-        "examples/",
-        "src/",
-    },
+    .paths = .{"."},
     .dependencies = .{
         .simdjzon = .{
-            .url = "https://github.com/travisstaloch/simdjzon/archive/15a9ff4a432eadf9b8795e92984c3fdd74f4153e.tar.gz",
-            .hash = "122096968add38db598f8cdf7c773453b150d85513e815b894efba3d50b043310099",
+            .url = "https://github.com/travisstaloch/simdjzon/archive/c7d7db0948ea5b9b46c184122fb6aa991fef78bc.tar.gz",
+            .hash = "122016cda36f139cb2c3af52681d2ba10e6c328f7f000dd92ca83d0558b9a2ffca14",
         },
     },
 }
