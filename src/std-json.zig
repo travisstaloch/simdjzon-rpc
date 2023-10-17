@@ -3,7 +3,7 @@ const mem = std.mem;
 const testing = std.testing;
 const talloc = testing.allocator;
 const json = std.json;
-const common = @import("common.zig");
+const common = @import("common");
 const Error = common.Error;
 
 pub fn Request(comptime Params: type) type {
@@ -16,7 +16,7 @@ pub fn Request(comptime Params: type) type {
         _error: []const u8,
 
         const Self = @This();
-        pub const Id = u128;
+        pub const Id = u64;
         pub const empty_id = std.math.maxInt(Id);
         pub const empty = Self{
             .id = empty_id,
@@ -147,31 +147,19 @@ fn checkField(
     const ex = @field(expected, field_name);
     const ac = actual.object.get(field_name) orelse
         return error.TestUnxpectedResult;
-
-    const merr = switch (ac) {
-        .integer => |int| testing.expectFmt(ex, "{}", .{int}) catch |e| blk: {
-            std.log.err(
-                "field '{s}' expected '{s}' actual '{}'",
-                .{ field_name, ex, int },
-            );
-            break :blk e;
-        },
-        .string => |s| testing.expectEqualStrings(ex, s) catch |e| blk: {
-            std.log.err(
-                "field '{s}' expected '{s}' actual '{s}'",
-                .{ field_name, ex, s },
-            );
-            break :blk e;
-        },
-        else => {
-            std.log.err("TODO {s}\n", .{@tagName(ac)});
-            unreachable;
-        },
-    };
-    _ = merr catch |e| {
-        std.log.err("input={s}", .{input});
-        return e;
-    };
+    if (comptime std.meta.trait.isZigString(@TypeOf(ex))) {
+        testing.expectEqualStrings(ex, ac.string) catch |e| {
+            std.log.err("field '{s}' expected '{s}' actual '{s}'", .{ field_name, ex, ac.string });
+            std.log.err("input={s}", .{input});
+            return e;
+        };
+    } else {
+        testing.expectEqual(@as(@TypeOf(ac.integer), ex), ac.integer) catch |e| {
+            std.log.err("field '{s}' expected '{}' actual '{}'", .{ field_name, ex, ac });
+            std.log.err("input={s}", .{input});
+            return e;
+        };
+    }
 }
 
 test {
@@ -186,9 +174,10 @@ test {
 
 fn RpcImpl(comptime R: type, comptime W: type) type {
     return struct {
-        parsed: json.Parsed(Req),
+        req: Req,
         current_req: SingleRequest = SingleRequest.empty,
         input: std.ArrayListUnmanaged(u8) = .{},
+        arena: *std.heap.ArenaAllocator,
         flags: Flags = .{},
         // TODO use AnyReader/Writer so that this type won't need to be generic
         reader: Reader,
@@ -200,8 +189,8 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         const Self = @This();
 
         pub const Req = union(enum) {
-            object: json.Parsed(SingleRequest),
-            array: json.Parsed([]const SingleRequest),
+            object: SingleRequest,
+            array: []const SingleRequest,
             null,
 
             pub fn jsonParse(
@@ -210,15 +199,15 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                 options: json.ParseOptions,
             ) !Req {
                 return switch (try scanner.peekNextTokenType()) {
-                    .object_begin => .{ .object = json.parseFromTokenSource(
+                    .object_begin => .{ .object = json.parseFromTokenSourceLeaky(
                         SingleRequest,
                         allocator,
                         scanner,
                         options,
-                    ) catch .{ .arena = undefined, .value = SingleRequest.empty } },
+                    ) catch SingleRequest.empty },
                     .array_begin => blk: {
                         const result = .{
-                            .array = try json.parseFromTokenSource(
+                            .array = try json.parseFromTokenSourceLeaky(
                                 []const SingleRequest,
                                 allocator,
                                 scanner,
@@ -240,21 +229,29 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         };
 
         pub fn deinit(self: *Self, allocator: mem.Allocator) void {
-            if (self.parsed.value != .null) self.parsed.deinit();
             self.input.deinit(allocator);
+            if (self.flags.is_init) {
+                self.arena.deinit();
+                allocator.destroy(self.arena);
+            }
         }
 
-        fn startResponse(self: *Self) !void {
-            if (self.parsed.value == .array)
+        pub fn startResponse(self: *Self) !void {
+            self.flags.is_first_response = true;
+            if (self.req == .array)
                 try self.writer.writer().writeByte('[');
         }
 
-        fn finishResponse(self: *Self) !void {
-            if (self.parsed.value == .array) {
+        pub fn finishResponse(self: *Self) !void {
+            if (self.req == .array) {
                 // instead of writing an empty array, skip flush and don't
                 // write anything
-                if (self.writer.end == 1 and self.writer.buf[0] == '[')
+                if (self.writer.end == 1 and self.writer.buf[0] == '[') {
+                    // reset the writer - clear to make sure subsequent reused
+                    // responses don't start with '['
+                    self.writer.end = 0;
                     return;
+                }
                 try self.writer.writer().writeByte(']');
             }
             try self.writer.flush();
@@ -262,8 +259,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
 
         fn writeComma(self: *Self) !void {
             if (!self.flags.is_first_response) {
-                if (self.parsed.value == .array)
-                    try self.writer.writer().writeByte(',');
+                if (self.req == .array) try self.writer.writer().writeByte(',');
             } else self.flags.is_first_response = false;
         }
 
@@ -324,6 +320,8 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
 
         /// read input from 'reader', init 'parsed' from json.parseFromSlice().
         pub fn parse(self: *Self, allocator: mem.Allocator) ?Error {
+            self.req = .null;
+            self.current_req = SingleRequest.empty;
             // read input
             self.input.items.len = 0;
             var l = self.input.toManaged(allocator);
@@ -332,10 +330,19 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
             self.input.items = l.items;
             self.input.capacity = l.capacity;
 
+            if (!self.flags.is_init) {
+                self.arena = allocator.create(std.heap.ArenaAllocator) catch
+                    return Error.init(@enumFromInt(-32000), "Out of memory");
+                self.arena.* = std.heap.ArenaAllocator.init(allocator);
+                self.flags.is_init = true;
+            } else {
+                _ = self.arena.reset(.retain_capacity);
+            }
+
             // parse json
-            self.parsed = json.parseFromSlice(
+            self.req = json.parseFromSliceLeaky(
                 Req,
-                allocator,
+                self.arena.allocator(),
                 self.input.items,
                 .{},
             ) catch return Error.init(
@@ -343,7 +350,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                 "Invalid JSON was received by the server.",
             );
 
-            switch (self.parsed.value) {
+            switch (self.req) {
                 .object, .array => {},
                 else => return Error.init(
                     .parse_error,
@@ -369,16 +376,16 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                 params.array.items[index];
         }
 
-        const FindAndCall = @TypeOf(Engine.findAndCall);
+        const FindAndCall = @TypeOf(common.Engine.findAndCall);
 
         pub fn respond(
             self: *Self,
-            engine: Engine,
+            engine: common.Engine,
             find_and_call: *const FindAndCall,
         ) !?Error {
-            switch (self.parsed.value) {
+            switch (self.req) {
                 .array => |array| {
-                    for (array.value) |ele| {
+                    for (array) |ele| {
                         self.current_req = ele;
                         if (checkRequest(ele)) |err| {
                             try self.writeError(err);
@@ -386,11 +393,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                         }
 
                         if (ele.method.len != 0) {
-                            if (!find_and_call(
-                                engine,
-                                self,
-                                ele.method,
-                            )) {
+                            if (!find_and_call(engine, self, ele.method)) {
                                 if (ele.id != SingleRequest.empty_id)
                                     try self.writeError(Error.init(
                                         .method_not_found,
@@ -402,22 +405,17 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                             "Method missing",
                         ));
                     }
-                    if (array.value.len == 0)
-                        return Error.init(
-                            .invalid_request,
-                            "Invalid request. Empty array.",
-                        );
+                    if (array.len == 0) return Error.init(
+                        .invalid_request,
+                        "Invalid request. Empty array.",
+                    );
                 },
                 .object => |object| {
-                    self.current_req = object.value;
-                    if (checkRequest(object.value)) |err| return err;
+                    self.current_req = object;
+                    if (checkRequest(object)) |err| return err;
 
-                    if (!find_and_call(
-                        engine,
-                        self,
-                        object.value.method,
-                    )) {
-                        if (object.value.id != SingleRequest.empty_id)
+                    if (!find_and_call(engine, self, object.method)) {
+                        if (object.id != SingleRequest.empty_id)
                             return Error.init(
                                 .method_not_found,
                                 "Method not found",
@@ -444,7 +442,8 @@ pub fn Rpc(comptime R: type, comptime W: type) type {
             return .{
                 .reader = reader,
                 .writer = std.io.bufferedWriter(writer),
-                .parsed = .{ .arena = undefined, .value = .null },
+                .req = .null,
+                .arena = undefined,
             };
         }
 
@@ -498,7 +497,7 @@ test "named params" {
     defer rpc.deinit(talloc);
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
-    rpc.current_req = rpc.parsed.value.object.value;
+    rpc.current_req = rpc.req.object;
     const prm_a = rpc.getParamByName("a") orelse return error.TestUnxpectedResult;
     try testing.expectEqual(JsonValueTag.integer, prm_a);
     try testing.expectEqual(@as(i64, 1), prm_a.integer);
@@ -521,7 +520,7 @@ test "indexed params" {
     defer rpc.deinit(talloc);
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
-    rpc.current_req = rpc.parsed.value.object.value;
+    rpc.current_req = rpc.req.object;
     const prm_0 = rpc.getParamByIndex(0) orelse return error.TestUnxpectedResult;
 
     try testing.expectEqual(JsonValueTag.integer, prm_0);
@@ -534,49 +533,8 @@ test "indexed params" {
     try testing.expect(rpc.getParamByIndex(2) == null);
 }
 
-pub const Callback = fn (rpc_ptr: *anyopaque) void;
-
-pub const NamedCallback = struct {
-    name: []const u8,
-    callback: *const Callback,
-    rpc_ptr: *anyopaque = undefined,
-};
-
-pub const Engine = struct {
-    callbacks: std.StringHashMapUnmanaged(NamedCallback) = .{},
-    allocator: mem.Allocator,
-
-    pub fn deinit(e: *Engine) void {
-        e.callbacks.deinit(e.allocator);
-    }
-
-    pub fn putCallback(e: *Engine, named_callback: NamedCallback) !void {
-        try e.callbacks.put(e.allocator, named_callback.name, named_callback);
-    }
-
-    fn findAndCall(engine: Engine, rpc_ptr: *anyopaque, method: []const u8) bool {
-        const named_cb = engine.callbacks.get(method) orelse return false;
-        named_cb.callback(rpc_ptr);
-        return true;
-    }
-
-    pub fn parseAndRespond(engine: Engine, rpc: anytype) !void {
-        if (rpc.parse(engine.allocator)) |err| {
-            try rpc.writeError(err);
-            try rpc.writer.flush();
-            return;
-        }
-        try rpc.startResponse();
-        if (try rpc.respond(engine, findAndCall)) |err|
-            try rpc.writeError(err);
-        try rpc.finishResponse();
-    }
-};
-
-test {
-    var e = Engine{ .allocator = talloc };
-    defer e.deinit();
-
+pub fn setupTestEngine(e: *common.Engine, comptime RpcType: type) !void {
+    _ = RpcType;
     try e.putCallback(.{
         .name = "sum",
         .callback = struct {
@@ -627,6 +585,12 @@ test {
             }
         }.func,
     });
+}
+
+test {
+    var e = common.Engine{ .allocator = talloc };
+    defer e.deinit();
+    try setupTestEngine(&e, FbsRpc);
 
     for (common.test_cases_2) |ie| {
         const input, const expected = ie;
@@ -636,7 +600,6 @@ test {
 
         var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
         defer rpc.deinit(talloc);
-
         try e.parseAndRespond(&rpc);
         try testing.expectEqualStrings(expected, output_fbs.getWritten());
     }
