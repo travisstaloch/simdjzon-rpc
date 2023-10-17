@@ -28,27 +28,27 @@ pub fn build(b: *std.Build) void {
     build_options.addOption(
         usize,
         "bench_iterations",
-        b.option(usize, "bench-iterations", "for benchmarking. number times " ++
-            "for benchmark to loop. default 100.") orelse 100,
+        b.option(usize, "bench-iterations", "number times for benchmark to " ++
+            "loop. default 100.") orelse 100,
     );
     build_options.addOption(
         bool,
         "bench_summary",
-        b.option(bool, "bench-summary", "for benchmarking. whether or " ++
-            " not to show timing and memory usage summary.") orelse false,
+        b.option(bool, "bench-summary", "whether or not to show bench timing " ++
+            "and memory usage summary. default false.") orelse false,
     );
     build_options.addOption(
         bool,
         "bench_use_gpa",
-        b.option(bool, "bench-use-gpa", "for benchmarking. whether or " ++
-            " not to use zig's general purpose allocator.  use " ++
-            " std.heap.c_allocator when false.") orelse false,
+        b.option(bool, "bench-use-gpa", "whether or not to use zig's " ++
+            "general purpose allocator.  use std.heap.c_allocator when " ++
+            "false.  default false.") orelse false,
     );
     build_options.addOption(
         bool,
         "bench_validate",
-        b.option(bool, "bench-validate", "for benchmarking. check that rpc " ++
-            "  output matches expected output.") orelse false,
+        b.option(bool, "bench-validate", "whether to check that rpc " ++
+            "output matches expected output.  default false.") orelse false,
     );
     const build_opts_mod = build_options.createModule();
 
