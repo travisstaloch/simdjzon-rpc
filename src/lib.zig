@@ -4,7 +4,7 @@ const talloc = testing.allocator;
 const mem = std.mem;
 const simdjzon = @import("simdjzon");
 const dom = simdjzon.dom;
-pub const common = @import("common.zig");
+const common = @import("common");
 
 pub const Error = common.Error;
 
@@ -500,7 +500,6 @@ test {
         var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
         defer rpc.deinit();
         try e.parseAndRespond(&rpc);
-
         try testing.expectEqualStrings(expected, output_fbs.getWritten());
     }
 }

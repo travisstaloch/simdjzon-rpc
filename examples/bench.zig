@@ -2,6 +2,7 @@ const std = @import("std");
 const jsonrpc = @import("simdjzon-rpc");
 const CountingAllocator = @import("CountingAllocator.zig");
 const build_options = @import("build_options");
+const common = @import("common");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 20 }){};
@@ -12,7 +13,7 @@ pub fn main() !void {
         std.heap.c_allocator, .{ .timings = true });
     const alloc = ca.allocator();
 
-    var e = jsonrpc.common.Engine{ .allocator = alloc };
+    var e = common.Engine{ .allocator = alloc };
     defer e.deinit();
     const Rpc = jsonrpc.FbsRpc;
     try jsonrpc.setupTestEngine(&e, Rpc);
@@ -31,7 +32,7 @@ pub fn main() !void {
         // std.debug.print("req_count={d:.0}\n", .{req_count});
         infbs.pos = 0;
         outfbs.pos = 0;
-        const input, const expected = jsonrpc.common.benchInputExpected(
+        const input, const expected = common.benchInputExpected(
             random.int(usize),
         );
         infbs.buffer = input;

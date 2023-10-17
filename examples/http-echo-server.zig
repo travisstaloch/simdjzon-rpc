@@ -1,6 +1,7 @@
 const std = @import("std");
 const jsonrpc = @import("simdjzon-rpc");
 var serverptr: *std.http.Server = undefined;
+const common = @import("common");
 
 pub fn main() !void {
     // var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
@@ -34,7 +35,7 @@ pub fn main() !void {
     std.debug.print("\nlistening on http://{}\n", .{address});
 
     // init jsonrpc engine
-    var e = jsonrpc.common.Engine{ .allocator = alloc };
+    var e = common.Engine{ .allocator = alloc };
     defer e.deinit();
     const Rpc = jsonrpc.Rpc(
         std.http.Server.Response.Reader,

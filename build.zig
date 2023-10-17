@@ -8,12 +8,21 @@ pub fn build(b: *std.Build) void {
         .{ .target = target, .optimize = optimize },
     );
     const simdjzon_mod = simdjzon_dep.module("simdjzon");
+    const common_mod = b.createModule(.{
+        .source_file = .{ .path = "src/common.zig" },
+    });
     const mod = b.addModule("simdjzon-rpc", .{
         .source_file = .{ .path = "src/lib.zig" },
-        .dependencies = &.{.{ .name = "simdjzon", .module = simdjzon_mod }},
+        .dependencies = &.{
+            .{ .name = "simdjzon", .module = simdjzon_mod },
+            .{ .name = "common", .module = common_mod },
+        },
     });
     const std_json_mod = b.addModule("std-json-rpc", .{
         .source_file = .{ .path = "src/std-json.zig" },
+        .dependencies = &.{
+            .{ .name = "common", .module = common_mod },
+        },
     });
     const build_options = b.addOptions();
     build_options.addOption(
@@ -38,11 +47,13 @@ pub fn build(b: *std.Build) void {
     const build_opts_mod = build_options.createModule();
 
     const main_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/lib.zig" },
+        .root_source_file = .{ .path = "src/tests.zig" },
         .target = target,
         .optimize = optimize,
     });
     main_tests.addModule("simdjzon", simdjzon_mod);
+    main_tests.addModule("common", common_mod);
+
     const run_main_tests = b.addRunArtifact(main_tests);
     run_main_tests.has_side_effects = true;
     const test_step = b.step("test", "Run library tests");
@@ -50,14 +61,17 @@ pub fn build(b: *std.Build) void {
 
     try buildExample("http-echo-server", b, target, optimize, &.{
         .{ "simdjzon-rpc", mod },
+        .{ "common", common_mod },
     }, &.{});
     try buildExample("bench", b, target, optimize, &.{
         .{ "simdjzon-rpc", mod },
         .{ "build_options", build_opts_mod },
+        .{ "common", common_mod },
     }, &.{"c"});
     try buildExample("bench-std-json", b, target, optimize, &.{
         .{ "std-json-rpc", std_json_mod },
         .{ "build_options", build_opts_mod },
+        .{ "common", common_mod },
     }, &.{"c"});
 }
 
