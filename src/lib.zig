@@ -13,7 +13,7 @@ pub const RpcInfo = struct {
     method: []const u8,
     element: dom.Element = undefined,
 
-    pub const Id = usize;
+    pub const Id = u64;
     pub const empty_id = std.math.maxInt(Id);
     pub const empty = RpcInfo{ .id = empty_id, .method = "" };
 
@@ -26,6 +26,8 @@ pub const RpcInfo = struct {
     }
 
     pub fn jsonParseImpl(out: *RpcInfo, doc: dom.Element) !?Error {
+        out.element = doc;
+
         if (!doc.is(.OBJECT))
             return Error.init(
                 .invalid_request,
@@ -49,19 +51,19 @@ pub const RpcInfo = struct {
 
         if (doc.at_key("id")) |id| {
             if (id.is(.STRING)) {
-                out.id = std.fmt.parseInt(Id, try id.get_string(), 10) catch
+                out.id = id.get_string_uint64() catch
                     return Error.init(
                     .invalid_request,
-                    "Invalid request. 'id' is an invalid integer.",
-                );
-            } else if (id.is(.INT64)) {
-                out.id = std.math.cast(Id, try id.get_int64()) orelse
-                    return Error.init(
-                    .invalid_request,
-                    "Invalid request. 'id' must be a positive integer.",
+                    "Invalid request. 'id' field is an invalid integer.",
                 );
             } else if (id.is(.UINT64)) {
-                out.id = try id.get_uint64();
+                out.id = id.get_uint64() catch unreachable;
+            } else if (id.is(.INT64)) {
+                out.id = std.math.cast(u64, id.get_int64() catch unreachable) orelse
+                    return Error.init(
+                    .invalid_request,
+                    "Invalid request. 'id' field is an invalid integer.",
+                );
             } else {
                 return Error.init(
                     .invalid_request,
@@ -87,7 +89,6 @@ pub const RpcInfo = struct {
             );
 
         out.method = try method.get_string();
-        out.element = doc;
         // std.debug.print("method={s} id={s}\n", .{ out.method, out.id });
         return null;
     }
@@ -135,6 +136,7 @@ test RpcInfo {
 }
 
 pub const Elements = union(enum) {
+    null,
     element: dom.Element,
     array: dom.Array,
 };
@@ -185,15 +187,20 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         }
 
         pub fn startResponse(self: *Self) !void {
+            self.flags.is_first_response = true;
             if (self.elements == .array) try self.writer.writer().writeByte('[');
         }
 
         pub fn finishResponse(self: *Self) !void {
             if (self.elements == .array) {
-                // instead of writing an empty array, skip flush so we don't
+                // instead of writing an empty array, skip flush and don't
                 // write anything
-                if (self.writer.end == 1 and self.writer.buf[0] == '[')
+                if (self.writer.end == 1 and self.writer.buf[0] == '[') {
+                    // reset the writer - clear to make sure subsequent reused
+                    // responses don't start with '['
+                    self.writer.end = 0;
                     return;
+                }
                 try self.writer.writer().writeByte(']');
             }
             try self.writer.flush();
@@ -238,10 +245,12 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
 
         /// read input from 'reader', init 'parser' and call parser.parse(),
         /// assign 'elements' field.
-        /// note: doesn't initialize 'info' field.  that happens in
-        /// respond().  if you want to manually initialize 'info', it can
-        /// be done like this: `try self.info.jsonParseImpl(self.elements.element)`
+        /// note: initializes 'info' field to RpcInfo.empty.  if you want to
+        /// manually initialize 'info', it can be done like this:
+        /// `try self.info.jsonParseImpl(self.elements.element)`
         pub fn parse(self: *Self, allocator: mem.Allocator) ?Error {
+            self.info = RpcInfo.empty;
+            self.elements = .null;
             if (!self.flags.is_init) {
                 self.parser = dom.Parser.initFromReader(allocator, self.reader, .{}) catch
                     return Error.init(@enumFromInt(-32000), "Out of memory");
@@ -250,7 +259,6 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                 self.parser.initExistingFromReader(self.reader, .{}) catch
                     return Error.init(@enumFromInt(-32000), "Out of memory");
             }
-
             self.parser.parse() catch
                 return Error.init(.parse_error, "Invalid JSON was received by the server.");
 
@@ -281,14 +289,15 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
             find_and_call: *const common.FindAndCall,
         ) !?Error {
             switch (self.elements) {
+                .null => {},
                 .array => |array| {
                     var i: usize = 0;
                     while (array.at(i)) |ele| : (i += 1) {
+                        self.info = RpcInfo.empty;
                         if (!ele.is(.OBJECT)) {
                             try self.writeError(Error.init(.invalid_request, "Invalid request. Not an object."));
                             continue;
                         }
-                        self.info = RpcInfo.empty;
                         if (try self.info.jsonParseImpl(ele)) |err| {
                             try self.writeError(err);
                             continue;
@@ -307,7 +316,6 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                         return Error.init(.invalid_request, "Invalid request. Empty array.");
                 },
                 .element => |element| {
-                    self.info = RpcInfo.empty;
                     if (try self.info.jsonParseImpl(element)) |err|
                         return err;
                     if (!find_and_call(
@@ -425,20 +433,17 @@ pub fn Rpc(comptime R: type, comptime W: type) type {
     };
 }
 
-test {
-    var e = common.Engine{ .allocator = talloc };
-    defer e.deinit();
-
+pub fn setupTestEngine(e: *common.Engine, comptime RpcType: type) !void {
     try e.putCallback(.{
         .name = "sum",
         .callback = struct {
             fn func(rpc_ptr: *anyopaque) void {
                 var r: i64 = 0;
                 var i: usize = 0;
-                while (FbsRpc.getParamByIndex(i, rpc_ptr)) |param| : (i += 1) {
+                while (RpcType.getParamByIndex(i, rpc_ptr)) |param| : (i += 1) {
                     r += param.int;
                 }
-                FbsRpc.writeResult("{}", .{r}, rpc_ptr) catch
+                RpcType.writeResult("{}", .{r}, rpc_ptr) catch
                     @panic("write failed");
             }
         }.func,
@@ -448,9 +453,9 @@ test {
         .name = "sum_named",
         .callback = struct {
             fn func(rpc_ptr: *anyopaque) void {
-                const a = FbsRpc.getParamByName("a", rpc_ptr) orelse unreachable;
-                const b = FbsRpc.getParamByName("b", rpc_ptr) orelse unreachable;
-                FbsRpc.writeResult("{}", .{a.int + b.int}, rpc_ptr) catch
+                const a = RpcType.getParamByName("a", rpc_ptr) orelse unreachable;
+                const b = RpcType.getParamByName("b", rpc_ptr) orelse unreachable;
+                RpcType.writeResult("{}", .{a.int + b.int}, rpc_ptr) catch
                     @panic("write failed");
             }
         }.func,
@@ -460,9 +465,9 @@ test {
         .name = "subtract",
         .callback = struct {
             fn func(rpc_ptr: *anyopaque) void {
-                const a = FbsRpc.getParamByIndex(0, rpc_ptr) orelse unreachable;
-                const b = FbsRpc.getParamByIndex(1, rpc_ptr) orelse unreachable;
-                FbsRpc.writeResult("{}", .{a.int - b.int}, rpc_ptr) catch
+                const a = RpcType.getParamByIndex(0, rpc_ptr) orelse unreachable;
+                const b = RpcType.getParamByIndex(1, rpc_ptr) orelse unreachable;
+                RpcType.writeResult("{}", .{a.int - b.int}, rpc_ptr) catch
                     @panic("write failed");
             }
         }.func,
@@ -472,13 +477,19 @@ test {
         .name = "get_data",
         .callback = struct {
             fn func(rpc_ptr: *anyopaque) void {
-                FbsRpc.writeResult(
+                RpcType.writeResult(
                     \\["hello",5]
                 , .{}, rpc_ptr) catch
                     @panic("write failed");
             }
         }.func,
     });
+}
+
+test {
+    var e = common.Engine{ .allocator = talloc };
+    defer e.deinit();
+    try setupTestEngine(&e, FbsRpc);
 
     for (common.test_cases_2) |ie| {
         const input, const expected = ie;
