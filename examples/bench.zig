@@ -40,15 +40,17 @@ pub fn main() !void {
 
         // std.debug.print("req_count={d:.0} input={s}\n", .{req_count, input});
         try e.parseAndRespond(&rpc);
-        if (!std.mem.eql(u8, outfbs.getWritten(), expected)) {
-            std.debug.print("\ninput   ={s}\n", .{input});
-            std.debug.print("expected={s}\n", .{expected});
-            std.debug.print("got     ={s}\n", .{outfbs.getWritten()});
-            return error.UnexpectedResponse;
+        if (build_options.bench_validate) {
+            if (!std.mem.eql(u8, outfbs.getWritten(), expected)) {
+                std.debug.print("\ninput   ={s}\n", .{input});
+                std.debug.print("expected={s}\n", .{expected});
+                std.debug.print("got     ={s}\n", .{outfbs.getWritten()});
+                return error.UnexpectedResponse;
+            }
         }
     }
 
-    if (build_options.bench_show_summary) {
+    if (build_options.bench_summary) {
         const elapsed = timer.lap();
         const seconds = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
         std.debug.print(

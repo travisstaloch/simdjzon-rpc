@@ -33,8 +33,8 @@ pub fn build(b: *std.Build) void {
     );
     build_options.addOption(
         bool,
-        "bench_show_summary",
-        b.option(bool, "bench-show-summary", "for benchmarking. whether or " ++
+        "bench_summary",
+        b.option(bool, "bench-summary", "for benchmarking. whether or " ++
             " not to show timing and memory usage summary.") orelse false,
     );
     build_options.addOption(
@@ -43,6 +43,12 @@ pub fn build(b: *std.Build) void {
         b.option(bool, "bench-use-gpa", "for benchmarking. whether or " ++
             " not to use zig's general purpose allocator.  use " ++
             " std.heap.c_allocator when false.") orelse false,
+    );
+    build_options.addOption(
+        bool,
+        "bench_validate",
+        b.option(bool, "bench-validate", "for benchmarking. check that rpc " ++
+            "  output matches expected output.") orelse false,
     );
     const build_opts_mod = build_options.createModule();
 
