@@ -5,13 +5,15 @@ zig build test
 echo
 echo "--- release-fast+c-allocator ---"
 echo
-zig build bench -Doptimize=ReleaseFast -Dbench-summary
-zig build bench-std-json -Doptimize=ReleaseFast -Dbench-summary
+args="-Doptimize=ReleaseFast -Dbench-summary"
+zig build bench $args
+zig build bench-std-json $args
 echo
 echo "--- release-fast+gpa ---"
 echo
-zig build bench -Doptimize=ReleaseFast -Dbench-summary -Dbench-use-gpa
-zig build bench-std-json -Doptimize=ReleaseFast -Dbench-summary -Dbench-use-gpa
+args="-Doptimize=ReleaseFast -Dbench-summary -Dbench-use-gpa"
+zig build bench $args
+zig build bench-std-json $args
 
 echo
 echo "--- Running benchmarks... ---"
