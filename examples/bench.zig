@@ -53,7 +53,7 @@ pub fn main() !void {
         const elapsed = timer.lap();
         const seconds = @as(f64, @floatFromInt(elapsed)) / std.time.ns_per_s;
         std.debug.print(
-            "\n reqs={d:.0}\n time={}\nreq/s={d:.1}K\n",
+            "\n(simdjzon-rpc)\n reqs={d:.0}\n time={}\nreq/s={d:.1}K\n",
             .{ req_count, std.fmt.fmtDuration(elapsed), req_count / seconds / 1000 },
         );
         ca.printSummary(std.debug.print);
