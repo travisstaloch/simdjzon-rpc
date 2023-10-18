@@ -36,7 +36,6 @@ pub fn main() !void {
             random.int(usize),
         );
         infbs.buffer = input;
-        defer rpc.parser.clearRetainingCapacity();
 
         // std.debug.print("req_count={d:.0} input={s}\n", .{req_count, input});
         try e.parseAndRespond(&rpc);
