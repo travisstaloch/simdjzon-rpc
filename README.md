@@ -54,7 +54,9 @@ ok
 
 ### bench
 
-There are 2 benchmark scripts [bench](examples/bench.zig) and [bench-std-json](examples/bench-std-json.zig).  They are very similar.  Their engines each have 4 rpc methods (sum, sum_named, subtract and get_data) and randomly choose an input json from [common](src/common.zig) 'test_cases_2'.
+There are 2 benchmark scripts [bench](examples/bench.zig) and [bench-std-json](examples/bench-std-json.zig).  They are very similar.  Their engines each have 4 rpc methods and randomly choose an input json from [common](src/common.zig) 'test_cases_2'.
+
+The following output can be reproduced by running [bench.sh](scripts/bench.sh).
 
 ### bench options
 ```console
