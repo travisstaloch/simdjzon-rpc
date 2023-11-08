@@ -45,7 +45,7 @@ pub const RpcInfo = struct {
 
         const version_string = version.get_string() catch unreachable;
         if (version_string.len != 3) return invalid_version_error;
-        const version_int = mem.readIntBig(u24, version_string[0..3]);
+        const version_int = mem.readInt(u24, version_string[0..3], .big);
         if (version_int != @intFromEnum(common.Version.two))
             return invalid_version_error;
 

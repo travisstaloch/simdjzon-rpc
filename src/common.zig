@@ -2,7 +2,7 @@ const std = @import("std");
 const mem = std.mem;
 
 pub const Version = enum(u24) {
-    two = mem.readIntBig(u24, "2.0"),
+    two = mem.readInt(u24, "2.0", .big),
 };
 
 pub const Error = struct {

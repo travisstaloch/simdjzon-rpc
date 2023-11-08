@@ -86,7 +86,7 @@ pub fn main() !void {
         defer rpc.deinit();
         res.transfer_encoding = .chunked;
         try res.headers.append("content-type", "application/json");
-        try res.do();
+        try res.send();
         try e.parseAndRespond(&rpc);
         try res.finish();
     }
