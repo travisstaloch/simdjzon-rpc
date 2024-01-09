@@ -9,18 +9,18 @@ pub fn build(b: *std.Build) void {
     );
     const simdjzon_mod = simdjzon_dep.module("simdjzon");
     const common_mod = b.createModule(.{
-        .source_file = .{ .path = "src/common.zig" },
+        .root_source_file = .{ .path = "src/common.zig" },
     });
     const mod = b.addModule("simdjzon-rpc", .{
-        .source_file = .{ .path = "src/lib.zig" },
-        .dependencies = &.{
+        .root_source_file = .{ .path = "src/lib.zig" },
+        .imports = &.{
             .{ .name = "simdjzon", .module = simdjzon_mod },
             .{ .name = "common", .module = common_mod },
         },
     });
     const std_json_mod = b.addModule("std-json-rpc", .{
-        .source_file = .{ .path = "src/std-json.zig" },
-        .dependencies = &.{
+        .root_source_file = .{ .path = "src/std-json.zig" },
+        .imports = &.{
             .{ .name = "common", .module = common_mod },
         },
     });
@@ -57,8 +57,8 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    main_tests.addModule("simdjzon", simdjzon_mod);
-    main_tests.addModule("common", common_mod);
+    main_tests.root_module.addImport("simdjzon", simdjzon_mod);
+    main_tests.root_module.addImport("common", common_mod);
 
     const run_main_tests = b.addRunArtifact(main_tests);
     run_main_tests.has_side_effects = true;
@@ -85,7 +85,7 @@ const NamedModule = struct { []const u8, *std.Build.Module };
 fn buildExample(
     name: []const u8,
     b: *std.Build,
-    target: std.zig.CrossTarget,
+    target: std.Build.ResolvedTarget,
     optimize: std.builtin.OptimizeMode,
     mods: []const NamedModule,
     libs: []const []const u8,
@@ -98,7 +98,7 @@ fn buildExample(
         .target = target,
         .optimize = optimize,
     });
-    for (mods) |mod| exe.addModule(mod[0], mod[1]);
+    for (mods) |mod| exe.root_module.addImport(mod[0], mod[1]);
     b.installArtifact(exe);
     const run_exe = b.addRunArtifact(exe);
     const run_exe_step = b.step(b.fmt("{s}", .{name}), b.fmt("Run {s}", .{name}));

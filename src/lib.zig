@@ -93,7 +93,6 @@ pub const RpcInfo = struct {
         return null;
     }
 };
-
 fn checkField(
     comptime field_name: []const u8,
     expected: RpcInfo,
@@ -102,7 +101,7 @@ fn checkField(
 ) !void {
     const ex = @field(expected, field_name);
     const ac = @field(actual, field_name);
-    if (comptime std.meta.trait.isZigString(@TypeOf(ac))) {
+    if (comptime common.isZigString(@TypeOf(ac))) {
         testing.expectEqualStrings(ex, ac) catch |e| {
             std.log.err("field '{s}' expected '{s}' actual '{s}'", .{ field_name, ex, ac });
             std.log.err("input={s}", .{input});
@@ -351,11 +350,11 @@ test "named params" {
     _ = try rpc.info.jsonParseImpl(rpc.elements.element);
 
     const prm_a = rpc.getParamByName("a") orelse return testing.expect(false);
-    try testing.expectEqual(JsonValue.Tag.int, prm_a);
+    try testing.expect(prm_a == .int);
     try testing.expectEqual(@as(i64, 1), prm_a.int);
 
     const prm_b = rpc.getParamByName("b") orelse return testing.expect(false);
-    try testing.expectEqual(JsonValue.Tag.int, prm_b);
+    try testing.expect(prm_b == .int);
     try testing.expectEqual(@as(i64, 2), prm_b.int);
 
     try testing.expect(rpc.getParamByName("c") == null);
@@ -375,11 +374,11 @@ test "indexed params" {
     _ = try rpc.info.jsonParseImpl(rpc.elements.element);
 
     const prm_0 = rpc.getParamByIndex(0) orelse return testing.expect(false);
-    try testing.expectEqual(JsonValue.Tag.int, prm_0);
+    try testing.expect(prm_0 == .int);
     try testing.expectEqual(@as(i64, 1), prm_0.int);
 
     const prm_1 = rpc.getParamByIndex(1) orelse return testing.expect(false);
-    try testing.expectEqual(JsonValue.Tag.int, prm_1);
+    try testing.expect(prm_1 == .int);
     try testing.expectEqual(@as(i64, 2), prm_1.int);
 
     try testing.expect(rpc.getParamByIndex(2) == null);

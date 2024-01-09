@@ -69,7 +69,7 @@ pub fn Request(comptime Params: type) type {
                         return result;
                     },
                     .string => {
-                        var name_token: ?json.Token = try scanner.nextAllocMax(
+                        const name_token: ?json.Token = try scanner.nextAllocMax(
                             allocator,
                             .alloc_if_needed,
                             options.max_value_len.?,
@@ -147,7 +147,7 @@ fn checkField(
     const ex = @field(expected, field_name);
     const ac = actual.object.get(field_name) orelse
         return error.TestUnxpectedResult;
-    if (comptime std.meta.trait.isZigString(@TypeOf(ex))) {
+    if (comptime common.isZigString(@TypeOf(ex))) {
         testing.expectEqualStrings(ex, ac.string) catch |e| {
             std.log.err("field '{s}' expected '{s}' actual '{s}'", .{ field_name, ex, ac.string });
             std.log.err("input={s}", .{input});
@@ -499,11 +499,11 @@ test "named params" {
     try testing.expect(merr == null);
     rpc.current_req = rpc.req.object;
     const prm_a = rpc.getParamByName("a") orelse return error.TestUnxpectedResult;
-    try testing.expectEqual(JsonValueTag.integer, prm_a);
+    try testing.expect(prm_a == .integer);
     try testing.expectEqual(@as(i64, 1), prm_a.integer);
 
     const prm_b = rpc.getParamByName("b") orelse return error.TestUnxpectedResult;
-    try testing.expectEqual(JsonValueTag.integer, prm_b);
+    try testing.expect(prm_b == .integer);
     try testing.expectEqual(@as(i64, 2), prm_b.integer);
 
     try testing.expect(rpc.getParamByName("c") == null);
@@ -523,11 +523,11 @@ test "indexed params" {
     rpc.current_req = rpc.req.object;
     const prm_0 = rpc.getParamByIndex(0) orelse return error.TestUnxpectedResult;
 
-    try testing.expectEqual(JsonValueTag.integer, prm_0);
+    try testing.expect(prm_0 == .integer);
     try testing.expectEqual(@as(i64, 1), prm_0.integer);
 
     const prm_1 = rpc.getParamByIndex(1) orelse return error.TestUnxpectedResult;
-    try testing.expectEqual(JsonValueTag.integer, prm_1);
+    try testing.expect(prm_1 == .integer);
     try testing.expectEqual(@as(i64, 2), prm_1.integer);
 
     try testing.expect(rpc.getParamByIndex(2) == null);
