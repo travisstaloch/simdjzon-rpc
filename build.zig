@@ -9,17 +9,17 @@ pub fn build(b: *std.Build) void {
     );
     const simdjzon_mod = simdjzon_dep.module("simdjzon");
     const common_mod = b.createModule(.{
-        .root_source_file = .{ .path = "src/common.zig" },
+        .root_source_file = b.path("src/common.zig"),
     });
     const mod = b.addModule("simdjzon-rpc", .{
-        .root_source_file = .{ .path = "src/lib.zig" },
+        .root_source_file = b.path("src/lib.zig"),
         .imports = &.{
             .{ .name = "simdjzon", .module = simdjzon_mod },
             .{ .name = "common", .module = common_mod },
         },
     });
     const std_json_mod = b.addModule("std-json-rpc", .{
-        .root_source_file = .{ .path = "src/std-json.zig" },
+        .root_source_file = b.path("src/std-json.zig"),
         .imports = &.{
             .{ .name = "common", .module = common_mod },
         },
@@ -53,7 +53,7 @@ pub fn build(b: *std.Build) void {
     const build_opts_mod = build_options.createModule();
 
     const main_tests = b.addTest(.{
-        .root_source_file = .{ .path = "src/tests.zig" },
+        .root_source_file = b.path("src/tests.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -92,9 +92,7 @@ fn buildExample(
 ) !void {
     const exe = b.addExecutable(.{
         .name = name,
-        .root_source_file = .{
-            .path = b.fmt("examples/{s}.zig", .{name}),
-        },
+        .root_source_file = b.path(b.fmt("examples/{s}.zig", .{name})),
         .target = target,
         .optimize = optimize,
     });
