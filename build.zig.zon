@@ -4,8 +4,8 @@
     .paths = .{"."},
     .dependencies = .{
         .simdjzon = .{
-            .url = "https://github.com/travisstaloch/simdjzon/archive/9baa7f831d6aaf41e60641aadae0cf8567b4e66a.tar.gz",
-            .hash = "122090a5ad010f234d3678b8d8684e4278eaeaaefcf1bfcf861f734402fbf0b0981f",
+            .url = "https://github.com/travisstaloch/simdjzon/archive/22d85a1699fa95346358cd1811cabf6adcd65279.tar.gz",
+            .hash = "12203e256e0aff85df284ab888d33d307398ec1067a73bb008c579ef16de7b38354a",
         },
     },
 }
