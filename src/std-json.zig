@@ -3,6 +3,7 @@ const mem = std.mem;
 const testing = std.testing;
 const talloc = testing.allocator;
 const json = std.json;
+
 const common = @import("common");
 const Error = common.Error;
 
@@ -138,37 +139,13 @@ pub fn Request(comptime Params: type) type {
     };
 }
 
-fn checkField(
-    comptime field_name: []const u8,
-    expected: anytype,
-    actual: json.Value,
-    input: []const u8,
-) !void {
-    const ex = @field(expected, field_name);
-    const ac = actual.object.get(field_name) orelse
-        return error.TestUnxpectedResult;
-    if (comptime common.isZigString(@TypeOf(ex))) {
-        testing.expectEqualStrings(ex, ac.string) catch |e| {
-            std.log.err("field '{s}' expected '{s}' actual '{s}'", .{ field_name, ex, ac.string });
-            std.log.err("input={s}", .{input});
-            return e;
-        };
-    } else {
-        testing.expectEqual(@as(@TypeOf(ac.integer), ex), ac.integer) catch |e| {
-            std.log.err("field '{s}' expected '{}' actual '{}'", .{ field_name, ex, ac });
-            std.log.err("input={s}", .{input});
-            return e;
-        };
-    }
-}
-
 test {
     inline for (common.test_cases_1) |ie| {
         const input, const expected = ie;
         const actual = try json.parseFromSlice(json.Value, talloc, input, .{});
         defer actual.deinit();
-        try checkField("id", expected, actual.value, input);
-        try checkField("method", expected, actual.value, input);
+        try testing.expectEqualStrings(expected.method, actual.value.object.get("method").?.string);
+        try testing.expectEqual(expected.id, @as(u64, @intCast(actual.value.object.get("id").?.integer)));
     }
 }
 
@@ -206,17 +183,16 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
                         options,
                     ) catch SingleRequest.empty },
                     .array_begin => blk: {
-                        const result = .{
-                            .array = try json.parseFromTokenSourceLeaky(
-                                []const SingleRequest,
-                                allocator,
-                                scanner,
-                                options,
-                            ),
-                        };
+                        const array = try json.parseFromTokenSourceLeaky(
+                            []const SingleRequest,
+                            allocator,
+                            scanner,
+                            options,
+                        );
+
                         if (try scanner.next() != .end_of_document)
                             return error.UnexpectedToken;
-                        break :blk result;
+                        break :blk .{ .array = array };
                     },
                     else => .null,
                 };

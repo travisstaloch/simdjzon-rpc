@@ -71,7 +71,12 @@ pub const Engine = struct {
 };
 
 /// some test cases from https://www.jsonrpc.org/specification
-pub const test_cases_1 = .{
+pub const RpcInfo = struct {
+    id: u64,
+    method: []const u8,
+};
+const TestCase = struct { []const u8, RpcInfo };
+pub const test_cases_1 = [_]TestCase{
     // call with positional params
     .{
         \\{"jsonrpc": "2.0", "method": "subtract", "params": [42, 23], "id": 1}

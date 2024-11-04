@@ -2,11 +2,11 @@ const std = @import("std");
 const testing = std.testing;
 const talloc = testing.allocator;
 const mem = std.mem;
+
+const common = @import("common");
+pub const Error = common.Error;
 const simdjzon = @import("simdjzon");
 const dom = simdjzon.dom;
-const common = @import("common");
-
-pub const Error = common.Error;
 
 pub const RpcInfo = struct {
     id: Id,
@@ -93,31 +93,9 @@ pub const RpcInfo = struct {
         return null;
     }
 };
-fn checkField(
-    comptime field_name: []const u8,
-    expected: RpcInfo,
-    actual: RpcInfo,
-    input: []const u8,
-) !void {
-    const ex = @field(expected, field_name);
-    const ac = @field(actual, field_name);
-    if (comptime common.isZigString(@TypeOf(ac))) {
-        testing.expectEqualStrings(ex, ac) catch |e| {
-            std.log.err("field '{s}' expected '{s}' actual '{s}'", .{ field_name, ex, ac });
-            std.log.err("input={s}", .{input});
-            return e;
-        };
-    } else {
-        testing.expectEqual(ex, ac) catch |e| {
-            std.log.err("field '{s}' expected '{}' actual '{}'", .{ field_name, ex, ac });
-            std.log.err("input={s}", .{input});
-            return e;
-        };
-    }
-}
 
 test RpcInfo {
-    const input_expecteds: []const struct { []const u8, RpcInfo } =
+    const input_expecteds: []const struct { []const u8, common.RpcInfo } =
         &common.test_cases_1;
 
     for (input_expecteds) |ie| {
@@ -129,8 +107,8 @@ test RpcInfo {
         var actual: RpcInfo = undefined;
         // std.debug.print("input={s}\n", .{input});
         try parser.element().get(&actual);
-        try checkField("id", expected, actual, input);
-        try checkField("method", expected, actual, input);
+        try testing.expectEqualStrings(expected.method, actual.method);
+        try testing.expectEqual(expected.id, actual.id);
     }
 }
 
