@@ -121,7 +121,7 @@ pub const Elements = union(enum) {
 pub const JsonValue = union(enum) {
     null,
     bool: bool,
-    int: i64,
+    integer: i64,
     double: f64,
     string: []const u8,
 
@@ -131,7 +131,7 @@ pub const JsonValue = union(enum) {
         return if (ele.is(.BOOL))
             .{ .bool = ele.get_bool() catch unreachable }
         else if (ele.is(.INT64))
-            .{ .int = ele.get_int64() catch unreachable }
+            .{ .integer = ele.get_int64() catch unreachable }
         else if (ele.is(.DOUBLE))
             .{ .double = ele.get_double() catch unreachable }
         else if (ele.is(.STRING))
@@ -271,8 +271,8 @@ pub const Rpc = struct {
 
     pub fn respond(
         self: *Rpc,
-        engine: common.Engine,
-        find_and_call: *const common.FindAndCall,
+        engine: common.Engine(Rpc),
+        find_and_call: *const common.Engine(Rpc).FindAndCall,
     ) !?Error {
         switch (self.elements) {
             .null => {},
@@ -332,12 +332,12 @@ test "named params" {
     _ = try rpc.info.jsonParseImpl(rpc.elements.element);
 
     const prm_a = rpc.getParamByName("a") orelse return testing.expect(false);
-    try testing.expect(prm_a == .int);
-    try testing.expectEqual(@as(i64, 1), prm_a.int);
+    try testing.expect(prm_a == .integer);
+    try testing.expectEqual(@as(i64, 1), prm_a.integer);
 
     const prm_b = rpc.getParamByName("b") orelse return testing.expect(false);
-    try testing.expect(prm_b == .int);
-    try testing.expectEqual(@as(i64, 2), prm_b.int);
+    try testing.expect(prm_b == .integer);
+    try testing.expectEqual(@as(i64, 2), prm_b.integer);
 
     try testing.expect(rpc.getParamByName("c") == null);
 }
@@ -356,77 +356,20 @@ test "indexed params" {
     _ = try rpc.info.jsonParseImpl(rpc.elements.element);
 
     const prm_0 = rpc.getParamByIndex(0) orelse return testing.expect(false);
-    try testing.expect(prm_0 == .int);
-    try testing.expectEqual(@as(i64, 1), prm_0.int);
+    try testing.expect(prm_0 == .integer);
+    try testing.expectEqual(@as(i64, 1), prm_0.integer);
 
     const prm_1 = rpc.getParamByIndex(1) orelse return testing.expect(false);
-    try testing.expect(prm_1 == .int);
-    try testing.expectEqual(@as(i64, 2), prm_1.int);
+    try testing.expect(prm_1 == .integer);
+    try testing.expectEqual(@as(i64, 2), prm_1.integer);
 
     try testing.expect(rpc.getParamByIndex(2) == null);
 }
 
-pub fn setupTestEngine(e: *common.Engine) !void {
-    try e.putCallback(.{
-        .name = "sum",
-        .callback = struct {
-            fn func(rpc_ptr: *anyopaque) void {
-                var r: i64 = 0;
-                var i: usize = 0;
-                const rpc: *Rpc = @alignCast(@ptrCast(rpc_ptr));
-                while (rpc.getParamByIndex(i)) |param| : (i += 1) {
-                    r += param.int;
-                }
-                rpc.writeResult("{}", .{r}) catch
-                    @panic("write failed");
-            }
-        }.func,
-    });
-
-    try e.putCallback(.{
-        .name = "sum_named",
-        .callback = struct {
-            fn func(rpc_ptr: *anyopaque) void {
-                const rpc: *Rpc = @alignCast(@ptrCast(rpc_ptr));
-                const a = rpc.getParamByName("a") orelse unreachable;
-                const b = rpc.getParamByName("b") orelse unreachable;
-                rpc.writeResult("{}", .{a.int + b.int}) catch
-                    @panic("write failed");
-            }
-        }.func,
-    });
-
-    try e.putCallback(.{
-        .name = "subtract",
-        .callback = struct {
-            fn func(rpc_ptr: *anyopaque) void {
-                const rpc: *Rpc = @alignCast(@ptrCast(rpc_ptr));
-                const a = rpc.getParamByIndex(0) orelse unreachable;
-                const b = rpc.getParamByIndex(1) orelse unreachable;
-                rpc.writeResult("{}", .{a.int - b.int}) catch
-                    @panic("write failed");
-            }
-        }.func,
-    });
-
-    try e.putCallback(.{
-        .name = "get_data",
-        .callback = struct {
-            fn func(rpc_ptr: *anyopaque) void {
-                const rpc: *Rpc = @alignCast(@ptrCast(rpc_ptr));
-                rpc.writeResult(
-                    \\["hello",5]
-                , .{}) catch
-                    @panic("write failed");
-            }
-        }.func,
-    });
-}
-
 test {
-    var e = common.Engine{ .allocator = talloc };
+    var e = common.Engine(Rpc){ .allocator = talloc };
     defer e.deinit();
-    try setupTestEngine(&e);
+    try common.setupTestEngine(Rpc, &e);
 
     for (common.test_cases_2) |ie| {
         const input, const expected = ie;

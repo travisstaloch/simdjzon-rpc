@@ -29,46 +29,48 @@ pub const Error = struct {
     }
 };
 
-pub const Callback = fn (rpc_ptr: *anyopaque) void;
+pub fn Engine(comptime Rpc: type) type {
+    return struct {
+        callbacks: std.StringHashMapUnmanaged(NamedCallback) = .{},
+        allocator: mem.Allocator,
 
-pub const NamedCallback = struct {
-    name: []const u8,
-    callback: *const Callback,
-    rpc_ptr: *anyopaque = undefined,
-};
+        pub const Callback = fn (rpc: *Rpc) void;
 
-pub const FindAndCall = @TypeOf(Engine.findAndCall);
+        pub const NamedCallback = struct {
+            name: []const u8,
+            callback: *const Callback,
+        };
 
-pub const Engine = struct {
-    callbacks: std.StringHashMapUnmanaged(NamedCallback) = .{},
-    allocator: mem.Allocator,
+        pub const FindAndCall = @TypeOf(Engine(Rpc).findAndCall);
+        const Self = @This();
 
-    pub fn deinit(e: *Engine) void {
-        e.callbacks.deinit(e.allocator);
-    }
-
-    pub fn putCallback(e: *Engine, named_callback: NamedCallback) !void {
-        try e.callbacks.put(e.allocator, named_callback.name, named_callback);
-    }
-
-    pub fn findAndCall(engine: Engine, rpc_ptr: *anyopaque, name: []const u8) bool {
-        const named_cb = engine.callbacks.get(name) orelse return false;
-        named_cb.callback(rpc_ptr);
-        return true;
-    }
-
-    pub fn parseAndRespond(engine: Engine, rpc: anytype) !void {
-        if (rpc.parse(engine.allocator)) |err| {
-            try rpc.writeError(err);
-            try rpc.writer.flush();
-            return;
+        pub fn deinit(e: *Self) void {
+            e.callbacks.deinit(e.allocator);
         }
-        try rpc.startResponse();
-        if (try rpc.respond(engine, findAndCall)) |err|
-            try rpc.writeError(err);
-        try rpc.finishResponse();
-    }
-};
+
+        pub fn putCallback(e: *Self, named_callback: NamedCallback) !void {
+            try e.callbacks.put(e.allocator, named_callback.name, named_callback);
+        }
+
+        pub fn findAndCall(engine: Self, rpc: *Rpc, name: []const u8) bool {
+            const named_cb = engine.callbacks.get(name) orelse return false;
+            named_cb.callback(rpc);
+            return true;
+        }
+
+        pub fn parseAndRespond(engine: Self, rpc: *Rpc) !void {
+            if (rpc.parse(engine.allocator)) |err| {
+                try rpc.writeError(err);
+                try rpc.writer.flush();
+                return;
+            }
+            try rpc.startResponse();
+            if (try rpc.respond(engine, findAndCall)) |err|
+                try rpc.writeError(err);
+            try rpc.finishResponse();
+        }
+    };
+}
 
 /// some test cases from https://www.jsonrpc.org/specification
 pub const RpcInfo = struct {
@@ -225,4 +227,57 @@ pub fn isZigString(comptime T: type) bool {
 
         break :blk false;
     };
+}
+
+pub fn setupTestEngine(comptime Rpc: type, e: *Engine(Rpc)) !void {
+    try e.putCallback(.{
+        .name = "sum",
+        .callback = struct {
+            fn func(rpc: *Rpc) void {
+                var r: i64 = 0;
+                var i: usize = 0;
+                while (rpc.getParamByIndex(i)) |param| : (i += 1) {
+                    r += param.integer;
+                }
+                rpc.writeResult("{}", .{r}) catch
+                    @panic("write failed");
+            }
+        }.func,
+    });
+
+    try e.putCallback(.{
+        .name = "sum_named",
+        .callback = struct {
+            fn func(rpc: *Rpc) void {
+                const a = rpc.getParamByName("a") orelse unreachable;
+                const b = rpc.getParamByName("b") orelse unreachable;
+                rpc.writeResult("{}", .{a.integer + b.integer}) catch
+                    @panic("write failed");
+            }
+        }.func,
+    });
+
+    try e.putCallback(.{
+        .name = "subtract",
+        .callback = struct {
+            fn func(rpc: *Rpc) void {
+                const a = rpc.getParamByIndex(0) orelse unreachable;
+                const b = rpc.getParamByIndex(1) orelse unreachable;
+                rpc.writeResult("{}", .{a.integer - b.integer}) catch
+                    @panic("write failed");
+            }
+        }.func,
+    });
+
+    try e.putCallback(.{
+        .name = "get_data",
+        .callback = struct {
+            fn func(rpc: *Rpc) void {
+                rpc.writeResult(
+                    \\["hello",5]
+                , .{}) catch
+                    @panic("write failed");
+            }
+        }.func,
+    });
 }
