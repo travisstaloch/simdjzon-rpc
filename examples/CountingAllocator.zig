@@ -1,8 +1,7 @@
 const std = @import("std");
+const Allocator = std.mem.Allocator;
 
 const CountingAllocator = @This();
-
-const Allocator = std.mem.Allocator;
 
 const Timed = struct {
     num: usize = 0,
@@ -34,11 +33,12 @@ pub fn allocator(ca: *CountingAllocator) Allocator {
             .alloc = alloc,
             .resize = resize,
             .free = free,
+            .remap = remap,
         },
     };
 }
 
-fn alloc(ctx: *anyopaque, len: usize, log2_ptr_align: u8, ra: usize) ?[*]u8 {
+fn alloc(ctx: *anyopaque, len: usize, log2_ptr_align: std.mem.Alignment, ra: usize) ?[*]u8 {
     const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
     var timer: std.time.Timer = if (self.timings)
         std.time.Timer.start() catch unreachable
@@ -58,7 +58,7 @@ fn alloc(ctx: *anyopaque, len: usize, log2_ptr_align: u8, ra: usize) ?[*]u8 {
     return result;
 }
 
-fn resize(ctx: *anyopaque, buf: []u8, log2_old_align_u8: u8, new_len: usize, ra: usize) bool {
+fn resize(ctx: *anyopaque, buf: []u8, log2_old_align_u8: std.mem.Alignment, new_len: usize, ra: usize) bool {
     const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
     var timer: std.time.Timer = if (self.timings)
         std.time.Timer.start() catch unreachable
@@ -92,7 +92,7 @@ fn resize(ctx: *anyopaque, buf: []u8, log2_old_align_u8: u8, new_len: usize, ra:
     }
 }
 
-pub fn free(ctx: *anyopaque, buf: []u8, log2_buf_align: u8, ret_addr: usize) void {
+pub fn free(ctx: *anyopaque, buf: []u8, log2_buf_align: std.mem.Alignment, ret_addr: usize) void {
     const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
     var timer: std.time.Timer = if (self.timings)
         std.time.Timer.start() catch unreachable
@@ -106,10 +106,44 @@ pub fn free(ctx: *anyopaque, buf: []u8, log2_buf_align: u8, ret_addr: usize) voi
         self.frees.time += t;
     }
     self.frees.num += 1;
+    // TODO: investigate why saturating sub is necessary here? seems wrong.
     self.bytes_in_use -= buf.len;
 }
 
-const fmt = "{s: <17}";
+fn remap(ctx: *anyopaque, buf: []u8, log2_old_align_u8: std.mem.Alignment, new_len: usize, ra: usize) ?[*]u8 {
+    const self: *CountingAllocator = @ptrCast(@alignCast(ctx));
+    var timer: std.time.Timer = if (self.timings)
+        std.time.Timer.start() catch unreachable
+    else
+        undefined;
+
+    const ret = self.parent_allocator.vtable.remap(ctx, buf, log2_old_align_u8, new_len, ra);
+    const t = if (self.timings) timer.read() else 0;
+    self.total_time += t;
+    if (ret == null) return ret;
+    // FIXME: not sure these are correct.  they were just copied from realloc().
+    if (new_len == 0) {
+        // free
+        self.frees.time += t;
+        self.frees.num += 1;
+        self.bytes_in_use -= buf.len;
+    } else if (new_len <= buf.len) {
+        // shrink
+        self.shrinks.time += t;
+        self.shrinks.num += 1;
+        self.bytes_in_use -= buf.len - new_len;
+    } else {
+        // expand
+        self.expands.time += t;
+        self.expands.num += 1;
+        self.bytes_in_use += new_len - buf.len;
+        self.total_bytes_allocated += new_len - buf.len;
+        self.max_bytes_in_use = @max(self.bytes_in_use, self.max_bytes_in_use);
+    }
+    return ret;
+}
+
+const fmt = "{s: <24}";
 
 fn printTimed(
     timed: Timed,
@@ -129,7 +163,8 @@ pub fn printSummary(
     ca: CountingAllocator,
     comptime printfn: fn (comptime fmt: []const u8, args: anytype) void,
 ) void {
-    printfn("\n" ++ fmt ++ "{d:.1}\n", .{ "total_bytes_allocated", std.fmt.fmtIntSizeBin(ca.total_bytes_allocated) });
+    printfn("\n-- CountingAllocator summary -- \n", .{});
+    printfn(fmt ++ "{d:.1}\n", .{ "total_bytes_allocated", std.fmt.fmtIntSizeBin(ca.total_bytes_allocated) });
     printfn(fmt ++ "{d:.1}\n", .{ "bytes_in_use", std.fmt.fmtIntSizeBin(ca.bytes_in_use) });
     printfn(fmt ++ "{d:.1}\n", .{ "max_bytes_in_use", std.fmt.fmtIntSizeBin(ca.max_bytes_in_use) });
     printTimed(ca.allocs, "allocs", printfn);
@@ -137,5 +172,5 @@ pub fn printSummary(
     printTimed(ca.shrinks, "shrinks", printfn);
     printTimed(ca.expands, "expands", printfn);
     // printTimed(ca.failures, "failures", printfn);
-    printfn("total_time {}\n", .{std.fmt.fmtDuration(ca.total_time)});
+    printfn(fmt ++ "{}\n\n", .{ "total_time", std.fmt.fmtDuration(ca.total_time) });
 }
