@@ -103,4 +103,5 @@ fn buildExample(
     run_exe_step.dependOn(&run_exe.step);
     if (b.args) |args| run_exe.addArgs(args);
     for (libs) |lib| exe.linkSystemLibrary(lib);
+    b.getInstallStep().dependOn(&exe.step);
 }
