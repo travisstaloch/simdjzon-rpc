@@ -1,11 +1,12 @@
 const std = @import("std");
-const jsonrpc = @import("simdjzon-rpc");
-var serverptr: *std.http.Server = undefined;
-const common = @import("common");
 
+const common = @import("common");
+const jsonrpc = @import("simdjzon-rpc");
+
+pub const read_buf_cap = 4096;
+
+var net_server_ptr: *std.net.Server = undefined;
 pub fn main() !void {
-    // var arena = std.heap.ArenaAllocator.init(std.heap.page_allocator);
-    // const alloc = arena.allocator();
     const Gpa = std.heap.GeneralPurposeAllocator(.{});
     var gpa = Gpa{};
     defer _ = gpa.deinit();
@@ -23,72 +24,77 @@ pub fn main() !void {
         }
     }
 
-    // init server
-    const address = try std.net.Ip4Address.parse("127.0.0.1", port);
-    var server = std.http.Server.init(
-        alloc,
-        .{ .reuse_port = true, .reuse_address = true },
-    );
-    serverptr = &server;
-    defer server.deinit();
-    try server.listen(.{ .in = address });
-    std.debug.print("\nlistening on http://{}\n", .{address});
+    // init net_server
+    const localhost = try std.net.Address.parseIp("127.0.0.1", port);
+    var net_server = try localhost.listen(.{ .reuse_address = true, .reuse_port = true });
+    net_server_ptr = &net_server;
+    defer net_server.deinit();
+
+    std.debug.print("\nlistening on http://{}\n", .{net_server.listen_address.getPort()});
 
     // init jsonrpc engine
-    var e = common.Engine{ .allocator = alloc };
+    var e = common.Engine(jsonrpc.Rpc){ .allocator = alloc };
     defer e.deinit();
-    const Rpc = jsonrpc.Rpc(
-        std.http.Server.Response.Reader,
-        std.http.Server.Response.Writer,
-    );
 
     try e.putCallback(.{
         .name = "echo",
         .callback = struct {
-            fn func(rpc_impl: *anyopaque) void {
-                const content = Rpc.getParamByIndex(0, rpc_impl) orelse unreachable;
-                Rpc.writeResult(
+            fn func(rpc: *jsonrpc.Rpc) void {
+                const content = rpc.getParamByIndex(0) orelse unreachable;
+                rpc.writeResult(
                     \\"{s}"
-                , .{content.string}, rpc_impl) catch
+                , .{content.string}) catch
                     @panic("write failed");
             }
         }.func,
     });
 
     // handle ctrl+c
-    try std.os.sigaction(std.os.SIG.INT, &.{
+    std.posix.sigaction(std.posix.SIG.INT, &.{
         .handler = .{
             .handler = struct {
                 fn func(sig: c_int) callconv(.C) void {
                     _ = sig;
-                    std.os.shutdown(serverptr.socket.sockfd.?, .both) catch unreachable;
+
+                    std.posix.shutdown(net_server_ptr.stream.handle, .both) catch |err| {
+                        std.debug.print("shutdown {s}\n", .{@errorName(err)});
+                    };
                 }
             }.func,
         },
-        .mask = std.os.empty_sigset,
+        .mask = std.posix.empty_sigset,
         .flags = 0,
     }, null);
 
     // unbuffered echo server - handle requests
     while (true) {
-        var res = server.accept(.{
-            .allocator = alloc,
-            .header_strategy = .{ .dynamic = std.mem.page_size },
-        }) catch |err| switch (err) {
+        const conn = net_server.accept() catch |err| switch (err) {
             error.SocketNotListening => break,
             else => return err,
         };
-        defer res.deinit();
-        defer _ = res.reset();
-        try res.wait();
+        defer conn.stream.close();
 
-        var rpc = Rpc.init(res.reader(), res.writer());
+        var header_buffer: [8192]u8 = undefined;
+        var server = std.http.Server.init(conn, &header_buffer);
+        var request = try server.receiveHead();
+        const reader = try request.reader();
+
+        var send_buffer: [8192]u8 = undefined;
+        var res = request.respondStreaming(.{
+            .send_buffer = &send_buffer,
+            .respond_options = .{
+                .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
+                .status = .ok,
+                .transfer_encoding = .chunked,
+            },
+        });
+
+        var rpc = jsonrpc.Rpc.init(reader, res.writer());
         defer rpc.deinit();
-        res.transfer_encoding = .chunked;
-        try res.headers.append("content-type", "application/json");
-        try res.send();
+
         try e.parseAndRespond(&rpc);
-        try res.finish();
+        try res.flush();
+        try res.endChunked(.{});
     }
 
     std.debug.print("\ndone\n", .{});
