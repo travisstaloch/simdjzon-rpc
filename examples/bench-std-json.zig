@@ -1,22 +1,31 @@
 const std = @import("std");
-const jsonrpc = @import("std-json-rpc");
-const CountingAllocator = @import("CountingAllocator.zig");
 const build_options = @import("build_options");
+
 const common = @import("common");
+const jsonrpc = @import("std-json-rpc");
+
+const CountingAllocator = @import("CountingAllocator.zig");
+
+const is_debug = @import("builtin").mode == .Debug;
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 20 }){};
-    defer _ = gpa.deinit();
+    const Gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 20 });
+    var gpa: Gpa = if (is_debug)
+        .{}
+    else
+        undefined;
+    defer {
+        if (is_debug) _ = gpa.deinit();
+    }
     var ca = CountingAllocator.init(if (build_options.bench_use_gpa)
-        gpa.allocator()
+        if (is_debug) gpa.allocator() else std.heap.smp_allocator
     else
         std.heap.c_allocator, .{ .timings = true });
     const alloc = ca.allocator();
 
-    var e = common.Engine{ .allocator = alloc };
+    var e = common.Engine(jsonrpc.Rpc){ .allocator = alloc };
     defer e.deinit();
-    const Rpc = jsonrpc.FbsRpc;
-    try jsonrpc.setupTestEngine(&e, Rpc);
+    try common.setupTestEngine(jsonrpc.Rpc, &e);
 
     var infbs = std.io.fixedBufferStream("");
     var buf: [512]u8 = undefined;
@@ -24,9 +33,9 @@ pub fn main() !void {
 
     var req_count: f64 = 0;
     var timer = try std.time.Timer.start();
-    var prng = std.rand.DefaultPrng.init(0);
+    var prng = std.Random.DefaultPrng.init(0);
     const random = prng.random();
-    var rpc = Rpc.init(infbs.reader(), outfbs.writer());
+    var rpc = jsonrpc.Rpc.init(infbs.reader().any(), outfbs.writer().any());
     defer rpc.deinit(alloc);
 
     while (req_count < build_options.bench_iterations) : (req_count += 1) {
