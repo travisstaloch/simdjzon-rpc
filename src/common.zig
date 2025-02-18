@@ -197,38 +197,6 @@ pub fn benchInputExpected(
     return test_cases_2[@mod(index, test_cases_2.len)];
 }
 
-pub fn isZigString(comptime T: type) bool {
-    return comptime blk: {
-        // Only pointer types can be strings, no optionals
-
-        const info = @typeInfo(T);
-        if (info != .pointer) break :blk false;
-
-        const ptr = &info.pointer;
-        // Check for CV qualifiers that would prevent coerction to []const u8
-
-        if (ptr.is_volatile or ptr.is_allowzero) break :blk false;
-
-        // If it's already a slice, simple check.
-
-        if (ptr.size == .Slice) {
-            break :blk ptr.child == u8;
-        }
-
-        // Otherwise check if it's an array type that coerces to slice.
-
-        if (ptr.size == .One) {
-            const child = @typeInfo(ptr.child);
-            if (child == .array) {
-                const arr = &child.array;
-                break :blk arr.child == u8;
-            }
-        }
-
-        break :blk false;
-    };
-}
-
 pub fn setupTestEngine(comptime Rpc: type, e: *Engine(Rpc)) !void {
     try e.putCallback(.{
         .name = "sum",

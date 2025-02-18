@@ -1,4 +1,4 @@
-set -e
+set -xe
 
 zig build test
 
@@ -19,10 +19,9 @@ echo
 echo "--- Running benchmarks... ---"
 echo
 
-poop=../poop/zig-out/bin/poop
+poop="../poop/zig-out/bin/poop -d 2000"
 args=-Dbench-iterations=30000
 
-set -x
 
 zig build -Doptimize=ReleaseFast -Dbench-use-gpa=false $args
 $poop zig-out/bin/bench-std-json zig-out/bin/bench
