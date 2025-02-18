@@ -150,270 +150,270 @@ test {
 }
 
 pub const Rpc = struct {
-        req: Req,
-        current_req: SingleRequest = SingleRequest.empty,
-        input: std.ArrayListUnmanaged(u8) = .{},
-        arena: *std.heap.ArenaAllocator,
-        flags: Flags = .{},
-        // TODO use AnyReader/Writer so that this type won't need to be generic
-        reader: std.io.AnyReader,
-        writer: Writer,
+    req: Req,
+    current_req: SingleRequest = SingleRequest.empty,
+    input: std.ArrayListUnmanaged(u8) = .{},
+    arena: *std.heap.ArenaAllocator,
+    flags: Flags = .{},
+    // TODO use AnyReader/Writer so that this type won't need to be generic
+    reader: std.io.AnyReader,
+    writer: Writer,
 
-        pub const Writer = std.io.BufferedWriter(4096, std.io.AnyWriter);
-        pub const SingleRequest = Request(json.Value);
+    pub const Writer = std.io.BufferedWriter(4096, std.io.AnyWriter);
+    pub const SingleRequest = Request(json.Value);
 
-        pub const Req = union(enum) {
-            object: SingleRequest,
-            array: []const SingleRequest,
-            null,
+    pub const Req = union(enum) {
+        object: SingleRequest,
+        array: []const SingleRequest,
+        null,
 
-            pub fn jsonParse(
-                allocator: std.mem.Allocator,
-                scanner: *json.Scanner,
-                options: json.ParseOptions,
-            ) !Req {
-                return switch (try scanner.peekNextTokenType()) {
-                    .object_begin => .{ .object = json.parseFromTokenSourceLeaky(
-                        SingleRequest,
+        pub fn jsonParse(
+            allocator: std.mem.Allocator,
+            scanner: *json.Scanner,
+            options: json.ParseOptions,
+        ) !Req {
+            return switch (try scanner.peekNextTokenType()) {
+                .object_begin => .{ .object = json.parseFromTokenSourceLeaky(
+                    SingleRequest,
+                    allocator,
+                    scanner,
+                    options,
+                ) catch SingleRequest.empty },
+                .array_begin => blk: {
+                    const array = try json.parseFromTokenSourceLeaky(
+                        []const SingleRequest,
                         allocator,
                         scanner,
                         options,
-                    ) catch SingleRequest.empty },
-                    .array_begin => blk: {
-                        const array = try json.parseFromTokenSourceLeaky(
-                            []const SingleRequest,
-                            allocator,
-                            scanner,
-                            options,
-                        );
+                    );
 
-                        if (try scanner.next() != .end_of_document)
-                            return error.UnexpectedToken;
-                        break :blk .{ .array = array };
-                    },
-                    else => .null,
-                };
-            }
-        };
-
-        pub const Flags = packed struct {
-            is_first_response: bool = true,
-            is_init: bool = false,
-        };
-
-        pub fn deinit(self: *Rpc, allocator: mem.Allocator) void {
-            self.input.deinit(allocator);
-            if (self.flags.is_init) {
-                self.arena.deinit();
-                allocator.destroy(self.arena);
-            }
-        }
-
-        pub fn startResponse(self: *Rpc) !void {
-            self.flags.is_first_response = true;
-            if (self.req == .array)
-                try self.writer.writer().writeByte('[');
-        }
-
-        pub fn finishResponse(self: *Rpc) !void {
-            if (self.req == .array) {
-                // instead of writing an empty array, skip flush and don't
-                // write anything
-                if (self.writer.end == 1 and self.writer.buf[0] == '[') {
-                    // reset the writer - clear to make sure subsequent reused
-                    // responses don't start with '['
-                    self.writer.end = 0;
-                    return;
-                }
-                try self.writer.writer().writeByte(']');
-            }
-            try self.writer.flush();
-        }
-
-        fn writeComma(self: *Rpc) !void {
-            if (!self.flags.is_first_response) {
-                if (self.req == .array) try self.writer.writer().writeByte(',');
-            } else self.flags.is_first_response = false;
-        }
-
-        /// write a jsonrpc result record to 'self.writer'
-        pub fn writeResult(
-            self: *Rpc,
-            comptime fmt: []const u8,
-            args: anytype,
-        ) !void {
-            if (self.current_req.id != SingleRequest.empty_id) {
-                try self.writeComma();
-                try self.writer.writer().print(
-                    \\{{"jsonrpc":"2.0","result":
-                    ++ fmt ++
-                        \\,"id":"{}"}}
-                ,
-                    args ++ .{self.current_req.id},
-                );
-            } else return error.MissingId;
-        }
-
-        /// initialize a jsonrpc object with the given reader and writer
-        pub fn init(reader: std.io.AnyReader, writer: std.io.AnyWriter) Rpc {
-            return .{
-                .reader = reader,
-                .writer = std.io.bufferedWriter(writer),
-                .req = .null,
-                .arena = undefined,
+                    if (try scanner.next() != .end_of_document)
+                        return error.UnexpectedToken;
+                    break :blk .{ .array = array };
+                },
+                else => .null,
             };
         }
+    };
 
-        /// write a jsonrpc error record to 'self.writer'
-        pub fn writeError(self: *Rpc, err: Error) !void {
-            try self.writeComma();
-            if (self.current_req.id != SingleRequest.empty_id) {
-                try self.writer.writer().print(
-                    \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":"{}"}}
-                , .{ @intFromEnum(err.code), err.note, self.current_req.id });
+    pub const Flags = packed struct {
+        is_first_response: bool = true,
+        is_init: bool = false,
+    };
+
+    pub fn deinit(self: *Rpc, allocator: mem.Allocator) void {
+        self.input.deinit(allocator);
+        if (self.flags.is_init) {
+            self.arena.deinit();
+            allocator.destroy(self.arena);
+        }
+    }
+
+    pub fn startResponse(self: *Rpc) !void {
+        self.flags.is_first_response = true;
+        if (self.req == .array)
+            try self.writer.writer().writeByte('[');
+    }
+
+    pub fn finishResponse(self: *Rpc) !void {
+        if (self.req == .array) {
+            // instead of writing an empty array, skip flush and don't
+            // write anything
+            if (self.writer.end == 1 and self.writer.buf[0] == '[') {
+                // reset the writer - clear to make sure subsequent reused
+                // responses don't start with '['
+                self.writer.end = 0;
                 return;
             }
+            try self.writer.writer().writeByte(']');
+        }
+        try self.writer.flush();
+    }
+
+    fn writeComma(self: *Rpc) !void {
+        if (!self.flags.is_first_response) {
+            if (self.req == .array) try self.writer.writer().writeByte(',');
+        } else self.flags.is_first_response = false;
+    }
+
+    /// write a jsonrpc result record to 'self.writer'
+    pub fn writeResult(
+        self: *Rpc,
+        comptime fmt: []const u8,
+        args: anytype,
+    ) !void {
+        if (self.current_req.id != SingleRequest.empty_id) {
+            try self.writeComma();
             try self.writer.writer().print(
-                \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":null}}
-            , .{ @intFromEnum(err.code), err.note });
+                \\{{"jsonrpc":"2.0","result":
+                ++ fmt ++
+                    \\,"id":"{}"}}
+            ,
+                args ++ .{self.current_req.id},
+            );
+        } else return error.MissingId;
+    }
+
+    /// initialize a jsonrpc object with the given reader and writer
+    pub fn init(reader: std.io.AnyReader, writer: std.io.AnyWriter) Rpc {
+        return .{
+            .reader = reader,
+            .writer = std.io.bufferedWriter(writer),
+            .req = .null,
+            .arena = undefined,
+        };
+    }
+
+    /// write a jsonrpc error record to 'self.writer'
+    pub fn writeError(self: *Rpc, err: Error) !void {
+        try self.writeComma();
+        if (self.current_req.id != SingleRequest.empty_id) {
+            try self.writer.writer().print(
+                \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":"{}"}}
+            , .{ @intFromEnum(err.code), err.note, self.current_req.id });
+            return;
         }
+        try self.writer.writer().print(
+            \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":null}}
+        , .{ @intFromEnum(err.code), err.note });
+    }
 
-        fn checkRequest(req: SingleRequest) ?Error {
-            if (req._error.len != 0)
-                return Error.init(.invalid_request, req._error);
+    fn checkRequest(req: SingleRequest) ?Error {
+        if (req._error.len != 0)
+            return Error.init(.invalid_request, req._error);
 
-            if (req.jsonrpc.len == 0)
-                return Error.init(
-                    .invalid_request,
-                    "Invalid request. Missing 'jsonrpc' field.",
-                );
-            if (!mem.eql(u8, req.jsonrpc, "2.0"))
-                return Error.init(
-                    .invalid_request,
-                    "Invalid request. 'jsonrpc' field must be '2.0'.",
-                );
-
-            if (req.method.len == 0)
-                return Error.init(
-                    .invalid_request,
-                    "Invalid request. 'method' field must be a string.",
-                );
-            return null;
-        }
-
-        /// read input from 'reader', init 'parsed' from json.parseFromSlice().
-        pub fn parse(self: *Rpc, allocator: mem.Allocator) ?Error {
-            self.req = .null;
-            self.current_req = SingleRequest.empty;
-            // read input
-            self.input.items.len = 0;
-            var l = self.input.toManaged(allocator);
-            self.reader.readAllArrayList(&l, std.math.maxInt(u32)) catch
-                return Error.init(@enumFromInt(-32000), "Out of memory");
-            self.input.items = l.items;
-            self.input.capacity = l.capacity;
-
-            if (!self.flags.is_init) {
-                self.arena = allocator.create(std.heap.ArenaAllocator) catch
-                    return Error.init(@enumFromInt(-32000), "Out of memory");
-                self.arena.* = std.heap.ArenaAllocator.init(allocator);
-                self.flags.is_init = true;
-            } else {
-                _ = self.arena.reset(.retain_capacity);
-            }
-
-            // parse json
-            self.req = json.parseFromSliceLeaky(
-                Req,
-                self.arena.allocator(),
-                self.input.items,
-                .{},
-            ) catch return Error.init(
-                .parse_error,
-                "Invalid JSON was received by the server.",
+        if (req.jsonrpc.len == 0)
+            return Error.init(
+                .invalid_request,
+                "Invalid request. Missing 'jsonrpc' field.",
+            );
+        if (!mem.eql(u8, req.jsonrpc, "2.0"))
+            return Error.init(
+                .invalid_request,
+                "Invalid request. 'jsonrpc' field must be '2.0'.",
             );
 
-            switch (self.req) {
-                .object, .array => {},
-                else => return Error.init(
-                    .parse_error,
-                    "Invalid JSON was received by the server.",
-                ),
-            }
-            return null;
+        if (req.method.len == 0)
+            return Error.init(
+                .invalid_request,
+                "Invalid request. 'method' field must be a string.",
+            );
+        return null;
+    }
+
+    /// read input from 'reader', init 'parsed' from json.parseFromSlice().
+    pub fn parse(self: *Rpc, allocator: mem.Allocator) ?Error {
+        self.req = .null;
+        self.current_req = SingleRequest.empty;
+        // read input
+        self.input.items.len = 0;
+        var l = self.input.toManaged(allocator);
+        self.reader.readAllArrayList(&l, std.math.maxInt(u32)) catch
+            return Error.init(@enumFromInt(-32000), "Out of memory");
+        self.input.items = l.items;
+        self.input.capacity = l.capacity;
+
+        if (!self.flags.is_init) {
+            self.arena = allocator.create(std.heap.ArenaAllocator) catch
+                return Error.init(@enumFromInt(-32000), "Out of memory");
+            self.arena.* = std.heap.ArenaAllocator.init(allocator);
+            self.flags.is_init = true;
+        } else {
+            _ = self.arena.reset(.retain_capacity);
         }
 
-        /// return a 'params' object field with the given name if it exists
-        pub fn getParamByName(self: *Rpc, name: []const u8) ?json.Value {
-            const params = self.current_req.params;
-            if (params != .object) return null;
-            return params.object.get(name);
+        // parse json
+        self.req = json.parseFromSliceLeaky(
+            Req,
+            self.arena.allocator(),
+            self.input.items,
+            .{},
+        ) catch return Error.init(
+            .parse_error,
+            "Invalid JSON was received by the server.",
+        );
+
+        switch (self.req) {
+            .object, .array => {},
+            else => return Error.init(
+                .parse_error,
+                "Invalid JSON was received by the server.",
+            ),
         }
+        return null;
+    }
 
-        /// return a 'params' array element at the given index if it exists
-        pub fn getParamByIndex(self: *Rpc, index: usize) ?json.Value {
-            const params = self.current_req.params;
-            if (params != .array) return null;
+    /// return a 'params' object field with the given name if it exists
+    pub fn getParamByName(self: *Rpc, name: []const u8) ?json.Value {
+        const params = self.current_req.params;
+        if (params != .object) return null;
+        return params.object.get(name);
+    }
 
-            return if (index >= params.array.items.len)
-                null
-            else
-                params.array.items[index];
-        }
+    /// return a 'params' array element at the given index if it exists
+    pub fn getParamByIndex(self: *Rpc, index: usize) ?json.Value {
+        const params = self.current_req.params;
+        if (params != .array) return null;
 
-        const FindAndCall = @TypeOf(common.Engine(Rpc).findAndCall);
+        return if (index >= params.array.items.len)
+            null
+        else
+            params.array.items[index];
+    }
 
-        pub fn respond(
-            self: *Rpc,
-            engine: common.Engine(Rpc),
-            find_and_call: *const FindAndCall,
-        ) !?Error {
-            switch (self.req) {
-                .array => |array| {
-                    for (array) |ele| {
-                        self.current_req = ele;
-                        if (checkRequest(ele)) |err| {
-                            try self.writeError(err);
-                            continue;
+    const FindAndCall = @TypeOf(common.Engine(Rpc).findAndCall);
+
+    pub fn respond(
+        self: *Rpc,
+        engine: common.Engine(Rpc),
+        find_and_call: *const FindAndCall,
+    ) !?Error {
+        switch (self.req) {
+            .array => |array| {
+                for (array) |ele| {
+                    self.current_req = ele;
+                    if (checkRequest(ele)) |err| {
+                        try self.writeError(err);
+                        continue;
+                    }
+
+                    if (ele.method.len != 0) {
+                        if (!find_and_call(engine, self, ele.method)) {
+                            if (ele.id != SingleRequest.empty_id)
+                                try self.writeError(Error.init(
+                                    .method_not_found,
+                                    "Method not found",
+                                ));
                         }
-
-                        if (ele.method.len != 0) {
-                            if (!find_and_call(engine, self, ele.method)) {
-                                if (ele.id != SingleRequest.empty_id)
-                                    try self.writeError(Error.init(
-                                        .method_not_found,
-                                        "Method not found",
-                                    ));
-                            }
-                        } else try self.writeError(Error.init(
-                            .invalid_request,
-                            "Method missing",
-                        ));
-                    }
-                    if (array.len == 0) return Error.init(
+                    } else try self.writeError(Error.init(
                         .invalid_request,
-                        "Invalid request. Empty array.",
-                    );
-                },
-                .object => |object| {
-                    self.current_req = object;
-                    if (checkRequest(object)) |err| return err;
-
-                    if (!find_and_call(engine, self, object.method)) {
-                        if (object.id != SingleRequest.empty_id)
-                            return Error.init(
-                                .method_not_found,
-                                "Method not found",
-                            );
-                    }
-                },
-                .null => try self.writeError(Error.init(
+                        "Method missing",
+                    ));
+                }
+                if (array.len == 0) return Error.init(
                     .invalid_request,
-                    "Invalid request. Not an object.",
-                )),
-            }
-            return null;
+                    "Invalid request. Empty array.",
+                );
+            },
+            .object => |object| {
+                self.current_req = object;
+                if (checkRequest(object)) |err| return err;
+
+                if (!find_and_call(engine, self, object.method)) {
+                    if (object.id != SingleRequest.empty_id)
+                        return Error.init(
+                            .method_not_found,
+                            "Method not found",
+                        );
+                }
+            },
+            .null => try self.writeError(Error.init(
+                .invalid_request,
+                "Invalid request. Not an object.",
+            )),
         }
+        return null;
+    }
 };
 
 test "named params" {
