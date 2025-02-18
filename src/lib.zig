@@ -141,184 +141,182 @@ pub const JsonValue = union(enum) {
     }
 };
 
-pub fn Rpc() type {
-    return struct {
-        parser: dom.Parser,
-        info: RpcInfo = RpcInfo.empty,
-        elements: Elements,
-        flags: Flags = .{},
-        reader: std.io.AnyReader,
-        writer: Writer,
+pub const Rpc = struct {
+    parser: dom.Parser,
+    info: RpcInfo = RpcInfo.empty,
+    elements: Elements,
+    flags: Flags = .{},
+    reader: std.io.AnyReader,
+    writer: Writer,
 
-        pub const Reader = std.io.AnyReader;
-        pub const Writer = std.io.BufferedWriter(4096, std.io.AnyWriter);
-        pub const Flags = packed struct {
-            is_first_response: bool = true,
-            is_init: bool = false,
+    pub const Reader = std.io.AnyReader;
+    pub const Writer = std.io.BufferedWriter(4096, std.io.AnyWriter);
+    pub const Flags = packed struct {
+        is_first_response: bool = true,
+        is_init: bool = false,
+    };
+
+    /// initialize a jsonrpc object with the given reader and writer
+    pub fn init(reader: std.io.AnyReader, writer: std.io.AnyWriter) Rpc {
+        return .{
+            .reader = reader,
+            .writer = std.io.bufferedWriter(writer),
+            .elements = .{ .element = undefined },
+            .parser = undefined,
         };
+    }
 
-        /// initialize a jsonrpc object with the given reader and writer
-        pub fn init(reader: std.io.AnyReader, writer: std.io.AnyWriter) Rpc {
-            return .{
-                .reader = reader,
-                .writer = std.io.bufferedWriter(writer),
-                .elements = .{ .element = undefined },
-                .parser = undefined,
-            };
-        }
+    pub fn deinit(self: *Rpc) void {
+        self.parser.deinit();
+    }
 
-        pub fn deinit(self: *Rpc) void {
-            self.parser.deinit();
-        }
+    pub fn startResponse(self: *Rpc) !void {
+        self.flags.is_first_response = true;
+        if (self.elements == .array) try self.writer.writer().writeByte('[');
+    }
 
-        pub fn startResponse(self: *Rpc) !void {
-            self.flags.is_first_response = true;
-            if (self.elements == .array) try self.writer.writer().writeByte('[');
-        }
-
-        pub fn finishResponse(self: *Rpc) !void {
-            if (self.elements == .array) {
-                // instead of writing an empty array, skip flush and don't
-                // write anything
-                if (self.writer.end == 1 and self.writer.buf[0] == '[') {
-                    // reset the writer - clear to make sure subsequent reused
-                    // responses don't start with '['
-                    self.writer.end = 0;
-                    return;
-                }
-                try self.writer.writer().writeByte(']');
+    pub fn finishResponse(self: *Rpc) !void {
+        if (self.elements == .array) {
+            // instead of writing an empty array, skip flush and don't
+            // write anything
+            if (self.writer.end == 1 and self.writer.buf[0] == '[') {
+                // reset the writer - clear to make sure subsequent reused
+                // responses don't start with '['
+                self.writer.end = 0;
+                return;
             }
-            try self.writer.flush();
+            try self.writer.writer().writeByte(']');
         }
+        try self.writer.flush();
+    }
 
-        fn writeComma(self: *Rpc) !void {
-            if (!self.flags.is_first_response) {
-                if (self.elements == .array) try self.writer.writer().writeByte(',');
-            } else self.flags.is_first_response = false;
-        }
+    fn writeComma(self: *Rpc) !void {
+        if (!self.flags.is_first_response) {
+            if (self.elements == .array) try self.writer.writer().writeByte(',');
+        } else self.flags.is_first_response = false;
+    }
 
-        /// write a jsonrpc result record to 'self.writer'
-        pub fn writeResult(
-            self: *Rpc,
-            comptime fmt: []const u8,
-            args: anytype,
-        ) !void {
-            if (self.info.id == RpcInfo.empty_id) return error.MissingId;
-            try self.writeComma();
+    /// write a jsonrpc result record to 'self.writer'
+    pub fn writeResult(
+        self: *Rpc,
+        comptime fmt: []const u8,
+        args: anytype,
+    ) !void {
+        if (self.info.id == RpcInfo.empty_id) return error.MissingId;
+        try self.writeComma();
 
+        try self.writer.writer().print(
+            \\{{"jsonrpc":"2.0","result":
+            ++ fmt ++
+                \\,"id":"{}"}}
+        ,
+            args ++ .{self.info.id},
+        );
+    }
+
+    /// write a jsonrpc error record to 'self.writer'
+    pub fn writeError(self: *Rpc, err: Error) !void {
+        try self.writeComma();
+        if (self.info.id == RpcInfo.empty_id)
             try self.writer.writer().print(
-                \\{{"jsonrpc":"2.0","result":
-                ++ fmt ++
-                    \\,"id":"{}"}}
-            ,
-                args ++ .{self.info.id},
-            );
+                \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":null}}
+            , .{ @intFromEnum(err.code), err.note })
+        else
+            try self.writer.writer().print(
+                \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":"{}"}}
+            , .{ @intFromEnum(err.code), err.note, self.info.id });
+    }
+
+    /// read input from 'reader', init 'parser' and call parser.parse(),
+    /// assign 'elements' field.
+    /// note: initializes 'info' field to RpcInfo.empty.  if you want to
+    /// manually initialize 'info', it can be done like this:
+    /// `try self.info.jsonParseImpl(self.elements.element)`
+    pub fn parse(self: *Rpc, allocator: mem.Allocator) ?Error {
+        self.info = RpcInfo.empty;
+        self.elements = .null;
+        if (!self.flags.is_init) {
+            self.parser = dom.Parser.initFromReader(allocator, self.reader, .{}) catch
+                return Error.init(@enumFromInt(-32000), "Out of memory");
+            self.flags.is_init = true;
+        } else {
+            self.parser.initExistingFromReader(self.reader, .{}) catch
+                return Error.init(@enumFromInt(-32000), "Out of memory");
         }
+        self.parser.parse() catch
+            return Error.init(.parse_error, "Invalid JSON was received by the server.");
 
-        /// write a jsonrpc error record to 'self.writer'
-        pub fn writeError(self: *Rpc, err: Error) !void {
-            try self.writeComma();
-            if (self.info.id == RpcInfo.empty_id)
-                try self.writer.writer().print(
-                    \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":null}}
-                , .{ @intFromEnum(err.code), err.note })
-            else
-                try self.writer.writer().print(
-                    \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":"{}"}}
-                , .{ @intFromEnum(err.code), err.note, self.info.id });
-        }
+        const ele = self.parser.element();
+        self.elements = if (ele.is(.ARRAY))
+            .{ .array = ele.get_array() catch unreachable }
+        else
+            .{ .element = ele };
+        return null;
+    }
 
-        /// read input from 'reader', init 'parser' and call parser.parse(),
-        /// assign 'elements' field.
-        /// note: initializes 'info' field to RpcInfo.empty.  if you want to
-        /// manually initialize 'info', it can be done like this:
-        /// `try self.info.jsonParseImpl(self.elements.element)`
-        pub fn parse(self: *Rpc, allocator: mem.Allocator) ?Error {
-            self.info = RpcInfo.empty;
-            self.elements = .null;
-            if (!self.flags.is_init) {
-                self.parser = dom.Parser.initFromReader(allocator, self.reader, .{}) catch
-                    return Error.init(@enumFromInt(-32000), "Out of memory");
-                self.flags.is_init = true;
-            } else {
-                self.parser.initExistingFromReader(self.reader, .{}) catch
-                    return Error.init(@enumFromInt(-32000), "Out of memory");
-            }
-            self.parser.parse() catch
-                return Error.init(.parse_error, "Invalid JSON was received by the server.");
-
-            const ele = self.parser.element();
-            self.elements = if (ele.is(.ARRAY))
-                .{ .array = ele.get_array() catch unreachable }
-            else
-                .{ .element = ele };
+    /// return a 'params' object field with the given name if it exists
+    pub fn getParamByName(self: *Rpc, name: []const u8) ?JsonValue {
+        const params = self.info.element.at_key("params") orelse
             return null;
-        }
+        return JsonValue.init(params.at_key(name) orelse return null);
+    }
 
-        /// return a 'params' object field with the given name if it exists
-        pub fn getParamByName(self: *Rpc, name: []const u8) ?JsonValue {
-            const params = self.info.element.at_key("params") orelse
-                return null;
-            return JsonValue.init(params.at_key(name) orelse return null);
-        }
+    /// return a 'params' array element at the given index if it exists
+    pub fn getParamByIndex(self: *Rpc, index: usize) ?JsonValue {
+        const params = self.info.element.at_key("params") orelse
+            return null;
+        const arr = params.get_array() catch return null;
+        return JsonValue.init(arr.at(index) orelse return null);
+    }
 
-        /// return a 'params' array element at the given index if it exists
-        pub fn getParamByIndex(self: *Rpc, index: usize) ?JsonValue {
-            const params = self.info.element.at_key("params") orelse
-                return null;
-            const arr = params.get_array() catch return null;
-            return JsonValue.init(arr.at(index) orelse return null);
-        }
-
-        pub fn respond(
-            self: *Rpc,
-            engine: common.Engine,
-            find_and_call: *const common.FindAndCall,
-        ) !?Error {
-            switch (self.elements) {
-                .null => {},
-                .array => |array| {
-                    var i: usize = 0;
-                    while (array.at(i)) |ele| : (i += 1) {
-                        self.info = RpcInfo.empty;
-                        if (!ele.is(.OBJECT)) {
-                            try self.writeError(Error.init(.invalid_request, "Invalid request. Not an object."));
-                            continue;
-                        }
-                        if (try self.info.jsonParseImpl(ele)) |err| {
-                            try self.writeError(err);
-                            continue;
-                        }
-
-                        if (!find_and_call(
-                            engine,
-                            self,
-                            self.info.method,
-                        )) {
-                            if (self.info.id != RpcInfo.empty_id)
-                                try self.writeError(Error.init(.method_not_found, "Method not found"));
-                        }
+    pub fn respond(
+        self: *Rpc,
+        engine: common.Engine,
+        find_and_call: *const common.FindAndCall,
+    ) !?Error {
+        switch (self.elements) {
+            .null => {},
+            .array => |array| {
+                var i: usize = 0;
+                while (array.at(i)) |ele| : (i += 1) {
+                    self.info = RpcInfo.empty;
+                    if (!ele.is(.OBJECT)) {
+                        try self.writeError(Error.init(.invalid_request, "Invalid request. Not an object."));
+                        continue;
                     }
-                    if (i == 0)
-                        return Error.init(.invalid_request, "Invalid request. Empty array.");
-                },
-                .element => |element| {
-                    if (try self.info.jsonParseImpl(element)) |err|
-                        return err;
+                    if (try self.info.jsonParseImpl(ele)) |err| {
+                        try self.writeError(err);
+                        continue;
+                    }
+
                     if (!find_and_call(
                         engine,
                         self,
                         self.info.method,
                     )) {
                         if (self.info.id != RpcInfo.empty_id)
-                            return Error.init(.method_not_found, "Method not found");
+                            try self.writeError(Error.init(.method_not_found, "Method not found"));
                     }
-                },
-            }
-            return null;
+                }
+                if (i == 0)
+                    return Error.init(.invalid_request, "Invalid request. Empty array.");
+            },
+            .element => |element| {
+                if (try self.info.jsonParseImpl(element)) |err|
+                    return err;
+                if (!find_and_call(
+                    engine,
+                    self,
+                    self.info.method,
+                )) {
+                    if (self.info.id != RpcInfo.empty_id)
+                        return Error.init(.method_not_found, "Method not found");
+                }
+            },
         }
-    };
-}
+        return null;
+    }
+};
 
 test "named params" {
     var input_fbs = std.io.fixedBufferStream(
