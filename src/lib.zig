@@ -141,34 +141,42 @@ pub const JsonValue = union(enum) {
     }
 };
 
-fn RpcImpl(comptime R: type, comptime W: type) type {
+pub fn Rpc() type {
     return struct {
         parser: dom.Parser,
         info: RpcInfo = RpcInfo.empty,
         elements: Elements,
         flags: Flags = .{},
-        // TODO use AnyReader/Writer so that this type won't need to be generic
-        reader: Reader,
+        reader: std.io.AnyReader,
         writer: Writer,
 
-        pub const Reader = R;
-        pub const Writer = std.io.BufferedWriter(std.mem.page_size, W);
-        const Self = @This();
+        pub const Reader = std.io.AnyReader;
+        pub const Writer = std.io.BufferedWriter(4096, std.io.AnyWriter);
         pub const Flags = packed struct {
             is_first_response: bool = true,
             is_init: bool = false,
         };
 
-        pub fn deinit(self: *Self) void {
+        /// initialize a jsonrpc object with the given reader and writer
+        pub fn init(reader: std.io.AnyReader, writer: std.io.AnyWriter) Rpc {
+            return .{
+                .reader = reader,
+                .writer = std.io.bufferedWriter(writer),
+                .elements = .{ .element = undefined },
+                .parser = undefined,
+            };
+        }
+
+        pub fn deinit(self: *Rpc) void {
             self.parser.deinit();
         }
 
-        pub fn startResponse(self: *Self) !void {
+        pub fn startResponse(self: *Rpc) !void {
             self.flags.is_first_response = true;
             if (self.elements == .array) try self.writer.writer().writeByte('[');
         }
 
-        pub fn finishResponse(self: *Self) !void {
+        pub fn finishResponse(self: *Rpc) !void {
             if (self.elements == .array) {
                 // instead of writing an empty array, skip flush and don't
                 // write anything
@@ -183,7 +191,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
             try self.writer.flush();
         }
 
-        fn writeComma(self: *Self) !void {
+        fn writeComma(self: *Rpc) !void {
             if (!self.flags.is_first_response) {
                 if (self.elements == .array) try self.writer.writer().writeByte(',');
             } else self.flags.is_first_response = false;
@@ -191,7 +199,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
 
         /// write a jsonrpc result record to 'self.writer'
         pub fn writeResult(
-            self: *Self,
+            self: *Rpc,
             comptime fmt: []const u8,
             args: anytype,
         ) !void {
@@ -208,7 +216,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         }
 
         /// write a jsonrpc error record to 'self.writer'
-        pub fn writeError(self: *Self, err: Error) !void {
+        pub fn writeError(self: *Rpc, err: Error) !void {
             try self.writeComma();
             if (self.info.id == RpcInfo.empty_id)
                 try self.writer.writer().print(
@@ -225,7 +233,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         /// note: initializes 'info' field to RpcInfo.empty.  if you want to
         /// manually initialize 'info', it can be done like this:
         /// `try self.info.jsonParseImpl(self.elements.element)`
-        pub fn parse(self: *Self, allocator: mem.Allocator) ?Error {
+        pub fn parse(self: *Rpc, allocator: mem.Allocator) ?Error {
             self.info = RpcInfo.empty;
             self.elements = .null;
             if (!self.flags.is_init) {
@@ -247,13 +255,15 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
             return null;
         }
 
-        pub fn getParamByName(self: *Self, name: []const u8) ?JsonValue {
+        /// return a 'params' object field with the given name if it exists
+        pub fn getParamByName(self: *Rpc, name: []const u8) ?JsonValue {
             const params = self.info.element.at_key("params") orelse
                 return null;
             return JsonValue.init(params.at_key(name) orelse return null);
         }
 
-        pub fn getParamByIndex(self: *Self, index: usize) ?JsonValue {
+        /// return a 'params' array element at the given index if it exists
+        pub fn getParamByIndex(self: *Rpc, index: usize) ?JsonValue {
             const params = self.info.element.at_key("params") orelse
                 return null;
             const arr = params.get_array() catch return null;
@@ -261,7 +271,7 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
         }
 
         pub fn respond(
-            self: *Self,
+            self: *Rpc,
             engine: common.Engine,
             find_and_call: *const common.FindAndCall,
         ) !?Error {
@@ -310,10 +320,6 @@ fn RpcImpl(comptime R: type, comptime W: type) type {
     };
 }
 
-const ConstFbs = std.io.FixedBufferStream([]const u8);
-const Fbs = std.io.FixedBufferStream([]u8);
-pub const FbsRpc = Rpc(ConstFbs.Reader, Fbs.Writer);
-
 test "named params" {
     var input_fbs = std.io.fixedBufferStream(
         \\{"jsonrpc": "2.0", "method": "sum", "params": {"a": 1, "b": 2}, "id": 1}
@@ -321,7 +327,7 @@ test "named params" {
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
 
-    var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
+    var rpc = Rpc.init(input_fbs.reader().any(), output_fbs.writer().any());
     defer rpc.deinit();
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
@@ -345,7 +351,7 @@ test "indexed params" {
     var buf: [256]u8 = undefined;
     var output_fbs = std.io.fixedBufferStream(&buf);
 
-    var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
+    var rpc = Rpc.init(input_fbs.reader().any(), output_fbs.writer().any());
     defer rpc.deinit();
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
@@ -362,65 +368,18 @@ test "indexed params" {
     try testing.expect(rpc.getParamByIndex(2) == null);
 }
 
-// /// exposes user facing type erased methods
-pub fn Rpc(comptime R: type, comptime W: type) type {
-    return struct {
-        pub const TypedRpc = RpcImpl(R, W);
-
-        /// initialize a jsonrpc object with the given reader and writer
-        pub fn init(reader: R, writer: W) TypedRpc {
-            return .{
-                .reader = reader,
-                .writer = std.io.bufferedWriter(writer),
-                .elements = .{ .element = undefined },
-                .parser = undefined,
-            };
-        }
-
-        /// write a jsonrpc result record
-        pub fn writeResult(
-            comptime fmt: []const u8,
-            args: anytype,
-            rpc_ptr: *anyopaque,
-        ) !void {
-            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_ptr));
-            try rpc.writeResult(fmt, args);
-        }
-
-        /// write a jsonrpc error record
-        pub fn writeError(
-            err: Error,
-            rpc_ptr: *anyopaque,
-        ) !void {
-            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_ptr));
-            try rpc.writeError(err);
-        }
-
-        /// return a 'params' array element at the given index if it exists
-        pub fn getParamByIndex(index: usize, rpc_ptr: *anyopaque) ?JsonValue {
-            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_ptr));
-            return rpc.getParamByIndex(index);
-        }
-
-        /// return a 'params' object field with the given name if it exists
-        pub fn getParamByName(name: []const u8, rpc_ptr: *anyopaque) ?JsonValue {
-            const rpc: *TypedRpc = @ptrCast(@alignCast(rpc_ptr));
-            return rpc.getParamByName(name);
-        }
-    };
-}
-
-pub fn setupTestEngine(e: *common.Engine, comptime RpcType: type) !void {
+pub fn setupTestEngine(e: *common.Engine) !void {
     try e.putCallback(.{
         .name = "sum",
         .callback = struct {
             fn func(rpc_ptr: *anyopaque) void {
                 var r: i64 = 0;
                 var i: usize = 0;
-                while (RpcType.getParamByIndex(i, rpc_ptr)) |param| : (i += 1) {
+                const rpc: *Rpc = @alignCast(@ptrCast(rpc_ptr));
+                while (rpc.getParamByIndex(i)) |param| : (i += 1) {
                     r += param.int;
                 }
-                RpcType.writeResult("{}", .{r}, rpc_ptr) catch
+                rpc.writeResult("{}", .{r}) catch
                     @panic("write failed");
             }
         }.func,
@@ -430,9 +389,10 @@ pub fn setupTestEngine(e: *common.Engine, comptime RpcType: type) !void {
         .name = "sum_named",
         .callback = struct {
             fn func(rpc_ptr: *anyopaque) void {
-                const a = RpcType.getParamByName("a", rpc_ptr) orelse unreachable;
-                const b = RpcType.getParamByName("b", rpc_ptr) orelse unreachable;
-                RpcType.writeResult("{}", .{a.int + b.int}, rpc_ptr) catch
+                const rpc: *Rpc = @alignCast(@ptrCast(rpc_ptr));
+                const a = rpc.getParamByName("a") orelse unreachable;
+                const b = rpc.getParamByName("b") orelse unreachable;
+                rpc.writeResult("{}", .{a.int + b.int}) catch
                     @panic("write failed");
             }
         }.func,
@@ -442,9 +402,10 @@ pub fn setupTestEngine(e: *common.Engine, comptime RpcType: type) !void {
         .name = "subtract",
         .callback = struct {
             fn func(rpc_ptr: *anyopaque) void {
-                const a = RpcType.getParamByIndex(0, rpc_ptr) orelse unreachable;
-                const b = RpcType.getParamByIndex(1, rpc_ptr) orelse unreachable;
-                RpcType.writeResult("{}", .{a.int - b.int}, rpc_ptr) catch
+                const rpc: *Rpc = @alignCast(@ptrCast(rpc_ptr));
+                const a = rpc.getParamByIndex(0) orelse unreachable;
+                const b = rpc.getParamByIndex(1) orelse unreachable;
+                rpc.writeResult("{}", .{a.int - b.int}) catch
                     @panic("write failed");
             }
         }.func,
@@ -454,9 +415,10 @@ pub fn setupTestEngine(e: *common.Engine, comptime RpcType: type) !void {
         .name = "get_data",
         .callback = struct {
             fn func(rpc_ptr: *anyopaque) void {
-                RpcType.writeResult(
+                const rpc: *Rpc = @alignCast(@ptrCast(rpc_ptr));
+                rpc.writeResult(
                     \\["hello",5]
-                , .{}, rpc_ptr) catch
+                , .{}) catch
                     @panic("write failed");
             }
         }.func,
@@ -466,7 +428,7 @@ pub fn setupTestEngine(e: *common.Engine, comptime RpcType: type) !void {
 test {
     var e = common.Engine{ .allocator = talloc };
     defer e.deinit();
-    try setupTestEngine(&e, FbsRpc);
+    try setupTestEngine(&e);
 
     for (common.test_cases_2) |ie| {
         const input, const expected = ie;
@@ -474,7 +436,7 @@ test {
         var buf: [512]u8 = undefined;
         var output_fbs = std.io.fixedBufferStream(&buf);
 
-        var rpc = FbsRpc.init(input_fbs.reader(), output_fbs.writer());
+        var rpc = Rpc.init(input_fbs.reader().any(), output_fbs.writer().any());
         defer rpc.deinit();
         try e.parseAndRespond(&rpc);
         try testing.expectEqualStrings(expected, output_fbs.getWritten());
