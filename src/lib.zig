@@ -53,17 +53,17 @@ pub const RpcInfo = struct {
             if (id.is(.STRING)) {
                 out.id = id.get_string_uint64() catch
                     return Error.init(
-                    .invalid_request,
-                    "Invalid request. 'id' field is an invalid integer.",
-                );
+                        .invalid_request,
+                        "Invalid request. 'id' field is an invalid integer.",
+                    );
             } else if (id.is(.UINT64)) {
                 out.id = id.get_uint64() catch unreachable;
             } else if (id.is(.INT64)) {
                 out.id = std.math.cast(u64, id.get_int64() catch unreachable) orelse
                     return Error.init(
-                    .invalid_request,
-                    "Invalid request. 'id' field is an invalid integer.",
-                );
+                        .invalid_request,
+                        "Invalid request. 'id' field is an invalid integer.",
+                    );
             } else {
                 return Error.init(
                     .invalid_request,
@@ -207,8 +207,8 @@ pub const Rpc = struct {
 
         try self.writer.writer().print(
             \\{{"jsonrpc":"2.0","result":
-            ++ fmt ++
-                \\,"id":"{}"}}
+        ++ fmt ++
+            \\,"id":"{}"}}
         ,
             args ++ .{self.info.id},
         );

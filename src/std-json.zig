@@ -246,8 +246,8 @@ pub const Rpc = struct {
             try self.writeComma();
             try self.writer.writer().print(
                 \\{{"jsonrpc":"2.0","result":
-                ++ fmt ++
-                    \\,"id":"{}"}}
+            ++ fmt ++
+                \\,"id":"{}"}}
             ,
                 args ++ .{self.current_req.id},
             );

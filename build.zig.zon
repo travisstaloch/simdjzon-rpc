@@ -1,7 +1,8 @@
 .{
-    .name = "simdjzon-rpc",
+    .name = .simdjzon_rpc,
     .version = "0.0.1",
     .paths = .{"."},
+    .fingerprint = 0xcf02cfd58fccaa13,
     .dependencies = .{
         .simdjzon = .{
             .url = "https://github.com/travisstaloch/simdjzon/archive/5ec9fae635a64b5bfc91292e61b3aca87cdc4755.tar.gz",
