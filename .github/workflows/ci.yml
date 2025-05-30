@@ -10,12 +10,13 @@ jobs:
     strategy:
       matrix:
         optimize: [Debug, ReleaseSafe, ReleaseFast, ReleaseSmall]
-    runs-on: ubuntu-latest
+        runs-on: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.runs-on }}
     steps:
       - uses: actions/checkout@v3
         with:
           submodules: recursive
-      - uses: mlugg/setup-zig@v1
+      - uses: mlugg/setup-zig@v2
         with:
           version: master
       - run: zig build test -Doptimize=${{ matrix.optimize }} --summary all
@@ -23,7 +24,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: mlugg/setup-zig@v1
+      - uses: mlugg/setup-zig@v2
         with:
           version: master
       - run: zig fmt --check .
