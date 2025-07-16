@@ -2,6 +2,8 @@ const std = @import("std");
 const testing = std.testing;
 const talloc = testing.allocator;
 const mem = std.mem;
+const Reader = std.io.Reader;
+const Writer = std.io.Writer;
 
 const common = @import("common");
 pub const Error = common.Error;
@@ -146,21 +148,19 @@ pub const Rpc = struct {
     info: RpcInfo = RpcInfo.empty,
     elements: Elements,
     flags: Flags = .{},
-    reader: std.io.AnyReader,
-    writer: Writer,
+    reader: *Reader,
+    writer: *Writer,
 
-    pub const Reader = std.io.AnyReader;
-    pub const Writer = std.io.BufferedWriter(4096, std.io.AnyWriter);
     pub const Flags = packed struct {
         is_first_response: bool = true,
         is_init: bool = false,
     };
 
     /// initialize a jsonrpc object with the given reader and writer
-    pub fn init(reader: std.io.AnyReader, writer: std.io.AnyWriter) Rpc {
+    pub fn init(reader: *Reader, writer: *Writer) Rpc {
         return .{
             .reader = reader,
-            .writer = std.io.bufferedWriter(writer),
+            .writer = writer,
             .elements = .{ .element = undefined },
             .parser = undefined,
         };
@@ -172,27 +172,27 @@ pub const Rpc = struct {
 
     pub fn startResponse(self: *Rpc) !void {
         self.flags.is_first_response = true;
-        if (self.elements == .array) try self.writer.writer().writeByte('[');
+        if (self.elements == .array) try self.writer.writeByte('[');
     }
 
     pub fn finishResponse(self: *Rpc) !void {
         if (self.elements == .array) {
             // instead of writing an empty array, skip flush and don't
             // write anything
-            if (self.writer.end == 1 and self.writer.buf[0] == '[') {
+            if (self.writer.end == 1 and self.writer.buffer[0] == '[') {
                 // reset the writer - clear to make sure subsequent reused
                 // responses don't start with '['
                 self.writer.end = 0;
                 return;
             }
-            try self.writer.writer().writeByte(']');
+            try self.writer.writeByte(']');
         }
         try self.writer.flush();
     }
 
     fn writeComma(self: *Rpc) !void {
         if (!self.flags.is_first_response) {
-            if (self.elements == .array) try self.writer.writer().writeByte(',');
+            if (self.elements == .array) try self.writer.writeByte(',');
         } else self.flags.is_first_response = false;
     }
 
@@ -205,7 +205,7 @@ pub const Rpc = struct {
         if (self.info.id == RpcInfo.empty_id) return error.MissingId;
         try self.writeComma();
 
-        try self.writer.writer().print(
+        try self.writer.print(
             \\{{"jsonrpc":"2.0","result":
         ++ fmt ++
             \\,"id":"{}"}}
@@ -218,11 +218,11 @@ pub const Rpc = struct {
     pub fn writeError(self: *Rpc, err: Error) !void {
         try self.writeComma();
         if (self.info.id == RpcInfo.empty_id)
-            try self.writer.writer().print(
+            try self.writer.print(
                 \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":null}}
             , .{ @intFromEnum(err.code), err.note })
         else
-            try self.writer.writer().print(
+            try self.writer.print(
                 \\{{"jsonrpc":"2.0","error":{{"code":{},"message":"{s}"}},"id":"{}"}}
             , .{ @intFromEnum(err.code), err.note, self.info.id });
     }
@@ -319,13 +319,13 @@ pub const Rpc = struct {
 };
 
 test "named params" {
-    var input_fbs = std.io.fixedBufferStream(
+    var input: Reader = .fixed(
         \\{"jsonrpc": "2.0", "method": "sum", "params": {"a": 1, "b": 2}, "id": 1}
     );
     var buf: [256]u8 = undefined;
-    var output_fbs = std.io.fixedBufferStream(&buf);
+    var output: Writer = .fixed(&buf);
 
-    var rpc = Rpc.init(input_fbs.reader().any(), output_fbs.writer().any());
+    var rpc = Rpc.init(&input, &output);
     defer rpc.deinit();
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
@@ -343,13 +343,13 @@ test "named params" {
 }
 
 test "indexed params" {
-    var input_fbs = std.io.fixedBufferStream(
+    var input_fbs: Reader = .fixed(
         \\{"jsonrpc": "2.0", "method": "sum", "params": [1,2], "id": 1}
     );
     var buf: [256]u8 = undefined;
-    var output_fbs = std.io.fixedBufferStream(&buf);
+    var output_fbs: Writer = .fixed(&buf);
 
-    var rpc = Rpc.init(input_fbs.reader().any(), output_fbs.writer().any());
+    var rpc = Rpc.init(&input_fbs, &output_fbs);
     defer rpc.deinit();
     const merr = rpc.parse(talloc);
     try testing.expect(merr == null);
@@ -373,13 +373,13 @@ test {
 
     for (common.test_cases_2) |ie| {
         const input, const expected = ie;
-        var input_fbs = std.io.fixedBufferStream(input);
+        var input_fbs: Reader = .fixed(input);
         var buf: [512]u8 = undefined;
-        var output_fbs = std.io.fixedBufferStream(&buf);
+        var output_fbs: Writer = .fixed(&buf);
 
-        var rpc = Rpc.init(input_fbs.reader().any(), output_fbs.writer().any());
+        var rpc = Rpc.init(&input_fbs, &output_fbs);
         defer rpc.deinit();
         try e.parseAndRespond(&rpc);
-        try testing.expectEqualStrings(expected, output_fbs.getWritten());
+        try testing.expectEqualStrings(expected, output_fbs.buffered());
     }
 }

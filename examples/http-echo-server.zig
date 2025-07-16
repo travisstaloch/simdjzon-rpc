@@ -26,7 +26,7 @@ pub fn main() !void {
 
     // init net_server
     const localhost = try std.net.Address.parseIp("127.0.0.1", port);
-    var net_server = try localhost.listen(.{ .reuse_address = true, .reuse_port = true });
+    var net_server = try localhost.listen(.{ .reuse_address = true });
     net_server_ptr = &net_server;
     defer net_server.deinit();
 
@@ -53,7 +53,7 @@ pub fn main() !void {
     std.posix.sigaction(std.posix.SIG.INT, &.{
         .handler = .{
             .handler = struct {
-                fn func(sig: c_int) callconv(.C) void {
+                fn func(sig: c_int) callconv(.c) void {
                     _ = sig;
 
                     std.posix.shutdown(net_server_ptr.stream.handle, .both) catch |err| {
@@ -62,7 +62,7 @@ pub fn main() !void {
                 }
             }.func,
         },
-        .mask = std.posix.empty_sigset,
+        .mask = std.posix.sigemptyset(),
         .flags = 0,
     }, null);
 

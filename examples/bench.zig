@@ -1,5 +1,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
+const Reader = std.io.Reader;
+const Writer = std.io.Writer;
 
 const common = @import("common");
 const jsonrpc = @import("simdjzon-rpc");
@@ -28,10 +30,10 @@ pub fn main() !void {
     defer e.deinit();
     try common.setupTestEngine(jsonrpc.Rpc, &e);
 
-    var infbs = std.io.fixedBufferStream("");
+    var infbs: Reader = .fixed("");
     var buf: [512]u8 = undefined;
-    var outfbs = std.io.fixedBufferStream(&buf);
-    var rpc = jsonrpc.Rpc.init(infbs.reader().any(), outfbs.writer().any());
+    var outfbs: Writer = .fixed(&buf);
+    var rpc = jsonrpc.Rpc.init(&infbs, &outfbs);
     defer rpc.deinit();
 
     var req_count: f64 = 0;
@@ -40,12 +42,12 @@ pub fn main() !void {
     const random = prng.random();
     while (req_count < build_options.bench_iterations) : (req_count += 1) {
         // std.debug.print("req_count={d:.0}\n", .{req_count});
-        infbs.pos = 0;
-        outfbs.pos = 0;
+        infbs = .fixed("");
+        outfbs = .fixed(&buf);
         const input, const expected = common.benchInputExpected(
             random.int(usize),
         );
-        infbs.buffer = input;
+        infbs.buffer = @constCast(input);
 
         // std.debug.print("req_count={d:.0} input={s}\n", .{req_count, input});
         try e.parseAndRespond(&rpc);

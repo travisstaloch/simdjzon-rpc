@@ -53,12 +53,15 @@ pub fn build(b: *std.Build) void {
     const build_opts_mod = build_options.createModule();
 
     const main_tests = b.addTest(.{
-        .root_source_file = b.path("src/tests.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/tests.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
     main_tests.root_module.addImport("simdjzon", simdjzon_mod);
     main_tests.root_module.addImport("common", common_mod);
+    main_tests.use_llvm = true; // TODO remove when simdjzon #26 is resolved
 
     const run_main_tests = b.addRunArtifact(main_tests);
     run_main_tests.has_side_effects = true;
@@ -92,10 +95,13 @@ fn buildExample(
 ) !void {
     const exe = b.addExecutable(.{
         .name = name,
-        .root_source_file = b.path(b.fmt("examples/{s}.zig", .{name})),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path(b.fmt("examples/{s}.zig", .{name})),
+            .target = target,
+            .optimize = optimize,
+        }),
     });
+    exe.use_llvm = true; // TODO remove when simdjzon #26 is resolved
     for (mods) |mod| exe.root_module.addImport(mod[0], mod[1]);
     b.installArtifact(exe);
     const run_exe = b.addRunArtifact(exe);
