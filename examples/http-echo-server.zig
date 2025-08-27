@@ -74,14 +74,15 @@ pub fn main() !void {
         };
         defer conn.stream.close();
 
-        var header_buffer: [8192]u8 = undefined;
-        var server = std.http.Server.init(conn, &header_buffer);
-        var request = try server.receiveHead();
-        const reader = try request.reader();
-
+        var recv_buffer: [8192]u8 = undefined;
         var send_buffer: [8192]u8 = undefined;
-        var res = request.respondStreaming(.{
-            .send_buffer = &send_buffer,
+        var conn_reader = conn.stream.reader(&recv_buffer);
+        var conn_writer = conn.stream.writer(&send_buffer);
+        var server = std.http.Server.init(conn_reader.interface(), &conn_writer.interface);
+        var request = try server.receiveHead();
+
+        var reader_buffer: [8192]u8 = undefined;
+        var res = try request.respondStreaming(&reader_buffer, .{
             .respond_options = .{
                 .extra_headers = &.{.{ .name = "content-type", .value = "application/json" }},
                 .status = .ok,
@@ -89,7 +90,7 @@ pub fn main() !void {
             },
         });
 
-        var rpc = jsonrpc.Rpc.init(reader, res.writer());
+        var rpc = jsonrpc.Rpc.init(conn_reader.interface(), &res.writer);
         defer rpc.deinit();
 
         try e.parseAndRespond(&rpc);

@@ -27,24 +27,24 @@ pub fn main() !void {
     defer e.deinit();
     try common.setupTestEngine(jsonrpc.Rpc, &e);
 
-    var infbs = std.io.fixedBufferStream("");
+    var infbs = std.Io.Reader.fixed("");
     var buf: [512]u8 = undefined;
-    var outfbs = std.io.fixedBufferStream(&buf);
+    var outfbs = std.Io.Writer.fixed(&buf);
 
     var req_count: f64 = 0;
     var timer = try std.time.Timer.start();
     var prng = std.Random.DefaultPrng.init(0);
     const random = prng.random();
-    var rpc = jsonrpc.Rpc.init(infbs.reader().any(), outfbs.writer().any());
+    var rpc = jsonrpc.Rpc.init(&infbs, &outfbs);
     defer rpc.deinit(alloc);
 
     while (req_count < build_options.bench_iterations) : (req_count += 1) {
-        infbs.pos = 0;
-        outfbs.pos = 0;
+        infbs.seek = 0;
+        outfbs.end = 0;
         const input, const expected = common.benchInputExpected(
             random.int(usize),
         );
-        infbs.buffer = input;
+        infbs.buffer = @constCast(input);
 
         // std.debug.print("req_count={d:.0} input={s}\n", .{ req_count, input });
         try e.parseAndRespond(&rpc);
