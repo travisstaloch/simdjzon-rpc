@@ -2,8 +2,8 @@ const std = @import("std");
 const testing = std.testing;
 const talloc = testing.allocator;
 const mem = std.mem;
-const Reader = std.io.Reader;
-const Writer = std.io.Writer;
+const Reader = std.Io.Reader;
+const Writer = std.Io.Writer;
 
 const common = @import("common");
 pub const Error = common.Error;

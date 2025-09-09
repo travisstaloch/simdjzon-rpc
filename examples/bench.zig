@@ -1,7 +1,7 @@
 const std = @import("std");
 const build_options = @import("build_options");
-const Reader = std.io.Reader;
-const Writer = std.io.Writer;
+const Reader = std.Io.Reader;
+const Writer = std.Io.Writer;
 
 const common = @import("common");
 const jsonrpc = @import("simdjzon-rpc");

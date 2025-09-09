@@ -152,7 +152,7 @@ test {
 pub const Rpc = struct {
     req: Req,
     current_req: SingleRequest = SingleRequest.empty,
-    input: std.ArrayListUnmanaged(u8) = .{},
+    input: std.ArrayList(u8) = .{},
     arena: *std.heap.ArenaAllocator,
     flags: Flags = .{},
     // TODO use AnyReader/Writer so that this type won't need to be generic
