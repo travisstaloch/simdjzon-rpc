@@ -5,8 +5,8 @@
     .fingerprint = 0xcf02cfd58fccaa13,
     .dependencies = .{
         .simdjzon = .{
-            .url = "git+https://github.com/travisstaloch/simdjzon#091f827474b41121598fb089303ada1fa24641f1",
-            .hash = "simdjzon-0.0.1-7uNSgHSbBQAKhbCuVcqFMImf7gNIlGoVjEG2oi6yeSt3",
+            .url = "git+https://github.com/travisstaloch/simdjzon#3a3e31f3beed48b1f7bab89abb5e9eba35e70c61",
+            .hash = "simdjzon-0.0.1-7uNSgJybBQBQEGuian5c_fNW2E0y5ZSxCThZ6j75LlIp",
         },
     },
 }
